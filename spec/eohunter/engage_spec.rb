@@ -139,6 +139,41 @@ RSpec.describe EO::Engine::Behaviors::Engage do
 
   after { EO::Engine::Events.reset! }
 
+  it 'runs a named preparation without stance or target substitution, respecting once' do
+    policy.preparations = EO::Engine::Preparations.new('target' => { 'perform' => 'feed my crystal', 'result' => 'user_feed_result' })
+    policy.routines = { 'a' => ['prepare target(once)'] }
+    result = EO::Engine::Actions::Result.new(status: :success, reason: :prepared)
+    action = instance_double(EO::Engine::Actions::Prepare, call: result)
+    expect(EO::Engine::Actions::Prepare).to receive(:new).with(world, name: 'target', preparations: policy.preparations).once.and_return(action)
+    expect(engage).not_to receive(:soothe)
+    expect(engage).not_to receive(:reaction)
+    expect(engage.tick(world)).to equal(result)
+    expect(engage.tick(world)).to have_attributes(status: :skipped, reason: :condition)
+    expect(stances).to be_empty
+  end
+
+  it 'holds an unsent named preparation instead of registering once or advancing to attack' do
+    policy.preparations = EO::Engine::Preparations.new('crystal' => { 'perform' => 'feed my crystal', 'result' => 'user_feed_result' })
+    policy.routines = { 'a' => ['prepare crystal(once)', 'attack'] }
+    skipped = EO::Engine::Actions::Result.new(status: :skipped, reason: :muckled)
+    prepared = EO::Engine::Actions::Result.new(status: :success, reason: :prepared)
+    action = instance_double(EO::Engine::Actions::Prepare)
+    allow(action).to receive(:call).and_return(skipped, prepared)
+    expect(EO::Engine::Actions::Prepare).to receive(:new).twice.and_return(action)
+    expect(engage.tick(world)).to equal(skipped)
+    expect(engage.tick(world)).to equal(prepared)
+    expect(calls.map(&:first)).not_to include(:attack)
+    engage.tick(world)
+    expect(calls.map(&:first)).to include(:attack)
+  end
+
+  it 'retains the normal stance change for legacy spell preparation' do
+    policy.routines = { 'a' => ['prepare spirit warding i'] }
+    engage.tick(world)
+    expect(stances).to eq(['defensive'])
+    expect(calls).to include([:command, { command: 'prepare spirit warding i' }])
+  end
+
   it 'wants control only in our room with a wanted creature' do
     expect(engage.wants_control?(world)).to be true
     world[:claim_mine?] = false

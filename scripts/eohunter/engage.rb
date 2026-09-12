@@ -27,11 +27,11 @@ module EO::Engine
     Policy = Struct.new(:routines, :quick_commands, :disable_commands, :priority, :hunting_stance, :wander_stance,
                         :wand_if_oom, :use_wracking, :wracking_spirit, :oom, :ambush, :quick,
                         :archery_aim, :aim, :tier3, :uac_smite, :uac_mstrike, :ammo_container, :fresh_wand_container,
-                        :dead_wand_container, :wand, :weapon_reaction, keyword_init: true) do
+                        :dead_wand_container, :wand, :weapon_reaction, :preparations, keyword_init: true) do
       def initialize(routines: {}, quick_commands: [], disable_commands: [], priority: false, hunting_stance: 'defensive',
                      wander_stance: 'defensive', wand_if_oom: false, use_wracking: false, wracking_spirit: 0, oom: 0, ambush: [], quick: false,
                      archery_aim: [], aim: [], tier3: 'punch', uac_smite: false, uac_mstrike: false, ammo_container: nil,
-                     fresh_wand_container: nil, dead_wand_container: nil, wand: [], weapon_reaction: true) = super
+                     fresh_wand_container: nil, dead_wand_container: nil, wand: [], weapon_reaction: true, preparations: nil) = super
 
       # find_routine: the letter's list, else the default (a).
       #
@@ -832,7 +832,7 @@ module EO::Engine
       # "allycast NNN name": a support spell on a named group member.
       ALLY_CAST = /^allycast\s+(\d+)\s+(.+)$/i
       # Words that Routines (routines.rb) handles; fire has its aim there too
-      UNSUPPORTED = /^(?:resonance|jewel|throw|wand|wandolier|unarmed|smite|caststop|unravel|barddispel|stomp|leech|rapid(?:fire)?|depress|phase|curse|efury|dhurl|briar|assume|wield|store|tether|sacrifice|nudgeweapons?|berserk|force|eachtarget|dislodge|fire|celerity|haste|506|slayer|240|tonis|1035)\b/i
+      UNSUPPORTED = /^(?:prepare|resonance|jewel|throw|wand|wandolier|unarmed|smite|caststop|unravel|barddispel|stomp|leech|rapid(?:fire)?|depress|phase|curse|efury|dhurl|briar|assume|wield|store|tether|sacrifice|nudgeweapons?|berserk|force|eachtarget|dislodge|fire|celerity|haste|506|slayer|240|tonis|1035)\b/i
 
       # @param policy [Engage::Policy]
       # @param targets_policy [Targets::Policy]
@@ -1011,8 +1011,10 @@ module EO::Engine
         return Actions::Result.new(status: :failed, reason: :no_routine) if @routine.empty?
 
         line = @routine[@cursor]
-        @cursor = (@cursor + 1) % @routine.size
-        run_line(world, line)
+        result = run_line(world, line)
+        held_preparation = named_preparation?(line.text) && result&.skipped? && result.reason != :condition
+        @cursor = (@cursor + 1) % @routine.size unless held_preparation
+        result
       end
 
       private
@@ -1126,10 +1128,13 @@ module EO::Engine
         blocked = EO::Engine::Engage::Conditions.blocked_by(line, world, @target, @state, @targets_policy, now: @clock.now)
         return Actions::Result.new(status: :skipped, reason: :condition, line: blocked) if blocked
 
-        text = line.text.gsub(/\btarget\b/, "##{@target.id}")
-        soothe(world)
-        reaction(world)
-        @stance.call(@policy.hunting_stance) if @policy.hunting_stance && text !~ STANCE_FREE
+        preparation = named_preparation?(line.text)
+        text = preparation ? line.text : line.text.gsub(/\btarget\b/, "##{@target.id}")
+        unless preparation
+          soothe(world)
+          reaction(world)
+          @stance.call(@policy.hunting_stance) if @policy.hunting_stance && text !~ STANCE_FREE
+        end
         if @routine_selector
           before = action_resources(world)
           Events.emit(:routine_action_started, target: @target.id.to_s, name: @target.name.to_s,
@@ -1148,8 +1153,13 @@ module EO::Engine
           @state.combat_blocked_room = world.room.id
           Events.emit(:combat_blocked, room: world.room.id, target: @target&.id)
         end
-        @state.register(@target.id, line.raw, @clock.now) if result && !(result.failed? && result.reason == :condition)
+        unsent_preparation = named_preparation?(line.text) && result&.skipped?
+        @state.register(@target.id, line.raw, @clock.now) if result && !(result.failed? && result.reason == :condition) && !unsent_preparation
         result
+      end
+
+      def named_preparation?(text)
+        @policy.preparations && !@policy.preparations.empty? && !Preparations.name(text).nil?
       end
 
       def action_resources(world)

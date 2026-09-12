@@ -94,6 +94,9 @@ module EO::Engine
         state = engage.state
         state.routines_reset!(moved: false) if state.archery_stuck.nil?
         case text
+        when /^prepare\b/i
+          name = Preparations.name(text) if policy.preparations && !policy.preparations.empty?
+          name ? Actions::Prepare.new(world, name: name, preparations: policy.preparations).call : Actions::Command.new(world, command: text).call
         when /^sacrifice\b/ then Actions::Sacrifice.new(world, target: target).call
         when /^tether( recast)?\b/ then Actions::Tether.new(world, target: target, recast_on_transfer: !Regexp.last_match(1).nil?, targets_policy: engage.targets_policy).call
         when /^efury\s?(fire|cold)?/ then Actions::Efury.new(world, target: target, extra: Regexp.last_match(1)).call

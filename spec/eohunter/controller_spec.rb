@@ -167,6 +167,9 @@ RSpec.describe EO::Engine::Controller do
                      'resting_scripts' => [], 'hunting_scripts' => [],
                      'dead_man_switch' => false, 'depart_switch' => false)
       expect(selected.admit_profile!(profile)).to be(true)
+      profile['preparations'] = { 'crystal' => { 'perform' => 'feed my crystal', 'result' => 'user_feed_result' } }
+      expect { selected.admit_profile!(profile) }.to raise_error(EO::Engine::Controller::Invalid, /preparations/)
+      profile['preparations'] = {}
       profile['loot_script'] = 'eloot'
       expect { selected.admit_profile!(profile) }.to raise_error(EO::Engine::Controller::Invalid, /child scripts/)
     end

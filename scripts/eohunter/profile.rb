@@ -41,6 +41,7 @@ module EO::Engine
       'field_hunting_prep_commands' => [:split_xx, []], 'field_rest_timeout_seconds' => [:seconds, 900.0],
       'town_rest_required_eval' => [:string, nil], 'after_town_rest' => [:string, 'resume'],
       'combat_buffs' => [:structured, {}],
+      'preparations' => [:structured, {}],
       'crushing_dread' => [:to_i, 0], 'wot_poison' => [:bool, false], 'confusion' => [:bool, false], 'box_in_hand' => [:bool, false],
       'hunting_room_id' => [:room, nil], 'rallypoint_room_ids' => [:rooms, []], 'hunting_boundaries' => [:rooms, []],
       'rest_till_exp' => [:to_i, 0], 'rest_till_mana' => [:to_i, 0], 'rest_till_spirit' => [:to_i, 0], 'rest_till_percentstamina' => [:to_i, 0],
@@ -120,6 +121,11 @@ module EO::Engine
         raise ArgumentError, 'Field/Town Rest requires a positive resting_room_id for town'
       end
       @loadout_selection = Loadout::Selection.new(default: loadout_policy, sets: self['hunting_loadout_sets'], rules: self['hunting_loadout_rules'])
+      @preparations = Preparations.new(self['preparations'])
+      validate_preparation_words!
+      if !preparations.empty? && !(self['resting_room_id'].is_a?(Integer) && self['resting_room_id'].positive?)
+        raise ArgumentError, 'preparations requires a positive resting_room_id for safe recovery'
+      end
     end
 
     # The cleaned value for a RULES key; nil for a key not in RULES.
@@ -135,6 +141,9 @@ module EO::Engine
     # @param bounty [Boolean] ebounty owns a single town handoff
     # @return [true]
     def validate_rest_mode!(mode, controlled: false, bounty: false)
+      if !preparations.empty? && (%w[head tail].include?(mode) || controlled || bounty)
+        raise ArgumentError, 'preparations currently supports ordinary solo hunts only; group, LAB and bounty recovery contracts are unchanged'
+      end
       if buff_policy.enabled? && (%w[head tail].include?(mode) || controlled || bounty)
         raise ArgumentError, 'combat_buffs currently supports ordinary solo hunts only; group, LAB and bounty recovery contracts are unchanged'
       end
@@ -148,6 +157,9 @@ module EO::Engine
 
     # @return [BuffPolicy::Policy] validated opt-in combat requirements
     def buff_policy = @buff_policy ||= BuffPolicy::Policy.new(self['combat_buffs'])
+
+    # @return [Preparations] validated event-confirmed profile commands
+    attr_reader :preparations
 
     # The Rest behavior's Policy from the rest, fog, resting-room and
     # prep keys. rest_interval is fixed at 30.
@@ -170,7 +182,7 @@ module EO::Engine
         rally_rooms: self['rallypoint_room_ids'], fog_return: self['fog_return'], fog_optional: self['fog_optional'],
         fog_rift: self['fog_rift'], custom_fog: self['custom_fog'],
         resting_commands: self['resting_commands'], resting_scripts: self['resting_scripts'],
-        hunting_prep_commands: self['hunting_prep_commands'], hunting_scripts: self['hunting_scripts'],
+        hunting_prep_commands: self['hunting_prep_commands'], hunting_scripts: self['hunting_scripts'], preparations: preparations,
         wander_stance: self['wander_stance'], rest_interval: 30, sneaky: self['sneaky_sneaky']
       )
     end
@@ -282,7 +294,7 @@ module EO::Engine
                          archery_aim: self['archery_aim'], aim: self['aim'], tier3: self['tier3'], uac_smite: self['uac_smite'],
                          uac_mstrike: self['uac_mstrike'], ammo_container: self['ammo_container'],
                          fresh_wand_container: self['fresh_wand_container'], dead_wand_container: self['dead_wand_container'],
-                         wand: self['wand'], weapon_reaction: self['weapon_reaction'])
+                         wand: self['wand'], weapon_reaction: self['weapon_reaction'], preparations: preparations)
     end
 
     # The Mstrike Policy from the mstrike_* keys.
@@ -295,6 +307,23 @@ module EO::Engine
     end
 
     private
+
+    def validate_preparation_words!
+      return if preparations.empty?
+
+      @settings.each do |key, entries|
+        next unless key.include?('commands') || key == 'custom_fog'
+
+        routine = key.match?(/\Ahunting_commands(?:_[b-j])?\z/) || %w[quick_commands disable_commands].include?(key)
+        Engage::Routine.parse(Array(entries).flatten).each do |line|
+          if routine && line.text.match?(/\A(?:force|eachtarget|celerity|haste|506|slayer|240|tonis|1035)\b.*\bprepare\s+[a-z]/)
+            raise ArgumentError, "preparations cannot use routine prefixes in #{key}; use modifiers on prepare NAME"
+          end
+          name = Preparations.name(routine ? line.text : line.raw)
+          raise ArgumentError, "unknown preparation #{name} in #{key}" if name && !preparations[name]
+        end
+      end
+    end
 
     def rest_sites(context = nil)
       expression = self['town_rest_required_eval']
