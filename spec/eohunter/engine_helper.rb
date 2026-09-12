@@ -37,16 +37,28 @@ module Lich
           def configure(opts) = settings.merge!(opts)
 
           def on(*types, name: nil, &block)
-            names[name] = block if name
-            types.each { |t| (handlers[t] ||= []) << block }
+            if name
+              off(name)
+              names[name.to_s] = block
+            end
+            types = [:any] if types.empty?
+            types.each { |t| (handlers[t.to_sym] ||= []) << block }
             block
           end
 
-          def off(handler) = handlers.each_value { |list| list.delete(handler) }
+          def off(handler_or_name)
+            handler = handler_or_name.is_a?(Proc) ? handler_or_name : names.delete(handler_or_name.to_s)
+            names.delete_if { |_, h| h == handler }
+            handlers.each_value { |list| list.delete(handler) } if handler
+            nil
+          end
 
           # A fact from Lich, to whoever subscribed.
-          def emit(type, data) = Array(handlers[type]).each { |h| h.call(type, data) }
-          def reset! = (@handlers = {}; @enabled = false; @settings = { emit_attacks: false })
+          def emit(type, data)
+            (Array(handlers[type]).dup + Array(handlers[:any]).dup).each { |h| h.call(type, data) }
+          end
+
+          def reset! = (@handlers = {}; @names = {}; @enabled = false; @settings = { emit_attacks: false })
         end
       end
     end
