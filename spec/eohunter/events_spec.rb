@@ -80,4 +80,136 @@ RSpec.describe EO::Engine::Events do
       expect(described_class.instance_variable_get(:@waiters)).to be_empty
     end
   end
+
+  describe '.arm' do
+    def waiters = described_class.instance_variable_get(:@waiters)
+
+    it 'captures the first matching response before wait starts' do
+      handle = described_class.arm(:answer, :other) { |event| event.data[:item] == 'crystal' }
+      described_class.emit(:unrelated, item: 'crystal')
+      described_class.emit(:answer, item: 'other')
+      first = described_class.emit(:other, item: 'crystal', ok: false)
+      described_class.emit(:answer, item: 'crystal', ok: true)
+      expect(handle.wait(timeout: 1)).to equal(first)
+      expect(handle.reason).to eq(:confirmed)
+      expect(waiters).to be_empty
+    end
+
+    it 'excludes events emitted before arming, even when their subscribers arm a waiter' do
+      handle = nil
+      described_class.on(:answer) { handle = described_class.arm(:answer) }
+      described_class.emit(:answer)
+      expect(handle.wait(timeout: 0)).to be_nil
+      expect(handle.reason).to eq(:timeout)
+      expect(waiters).to be_empty
+    end
+
+    it 'uses a monotonic deadline and slices waits to at most 50 ms' do
+      handle = described_class.arm(:answer)
+      now = 100.0
+      waits = []
+      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { now }
+      allow(handle).to receive(:sleep) { |seconds| waits << seconds; now += seconds }
+      expect(Time).not_to receive(:now)
+      expect(handle.wait(timeout: 0.12)).to be_nil
+      expect(waits.sum).to be_within(0.0001).of(0.12)
+      expect(waits).to all(be <= 0.05)
+      expect(handle.reason).to eq(:timeout)
+      expect(waiters).to be_empty
+    end
+
+    it 'checks interrupt during a wait and unsubscribes' do
+      handle = described_class.arm(:answer)
+      stopping = false
+      allow(handle).to receive(:sleep) { stopping = true }
+      expect(handle.wait(timeout: 1, interrupt: -> { stopping })).to be_nil
+      expect(handle.reason).to eq(:interrupted)
+      expect(waiters).to be_empty
+    end
+
+    it 'checks the death predicate during a wait and unsubscribes' do
+      handle = described_class.arm(:answer)
+      dead = false
+      allow(handle).to receive(:sleep) { dead = true }
+      expect(handle.wait(timeout: 1) { dead }).to be_nil
+      expect(handle.reason).to eq(:dead)
+      expect(waiters).to be_empty
+    end
+
+    it 'lets interrupt and death win over an already queued answer' do
+      handle = described_class.arm(:answer)
+      described_class.emit(:answer)
+      expect(handle.wait(timeout: 1, interrupt: -> { true })).to be_nil
+      expect(handle.reason).to eq(:interrupted)
+
+      handle = described_class.arm(:answer)
+      described_class.emit(:answer)
+      expect(handle.wait(timeout: 1) { true }).to be_nil
+      expect(handle.reason).to eq(:dead)
+    end
+
+    it 'cancels idempotently and discards pending and later events' do
+      handle = described_class.arm(:answer)
+      described_class.emit(:answer)
+      expect(handle.cancel).to be_nil
+      expect(handle.cancel).to be_nil
+      described_class.emit(:answer)
+      expect(handle.wait(timeout: 1)).to be_nil
+      expect(handle.reason).to eq(:cancelled)
+      expect(waiters).to be_empty
+    end
+
+    it 'can cancel during a wait' do
+      handle = described_class.arm(:answer)
+      allow(handle).to receive(:sleep) { handle.cancel }
+      expect(handle.wait(timeout: 1)).to be_nil
+      expect(handle.reason).to eq(:cancelled)
+      expect(waiters).to be_empty
+    end
+
+    it 'cancels old handles on reset and leaves new handles usable' do
+      old = described_class.arm(:answer)
+      allow(old).to receive(:sleep) { described_class.reset! }
+      expect(old.wait(timeout: 1)).to be_nil
+      expect(old.reason).to eq(:cancelled)
+      fresh = described_class.arm(:answer)
+      answer = described_class.emit(:answer)
+      expect(fresh.wait(timeout: 1)).to equal(answer)
+      expect(waiters).to be_empty
+    end
+
+    it 'does not deliver a snapshotted emission to a cancelled waiter' do
+      handle = described_class.arm(:answer)
+      described_class.on(:answer) { handle.cancel }
+      described_class.emit(:answer)
+      expect(handle.wait(timeout: 1)).to be_nil
+      expect(waiters).to be_empty
+    end
+
+    it 'ignores a broken matcher without breaking the emitter or other waiters' do
+      broken = described_class.arm(:answer) { raise 'bad filter' }
+      other = described_class.arm(:answer)
+      event = described_class.emit(:answer)
+      expect(other.wait(timeout: 1)).to equal(event)
+      expect(broken.wait(timeout: 0)).to be_nil
+      expect(waiters).to be_empty
+    end
+
+    it 'unsubscribes if an interrupt or death predicate raises' do
+      handle = described_class.arm(:answer)
+      expect { handle.wait(timeout: 1, interrupt: -> { raise 'stop failed' }) }.to raise_error('stop failed')
+      expect(waiters).to be_empty
+      handle = described_class.arm(:answer)
+      expect { handle.wait(timeout: 1) { raise 'world failed' } }.to raise_error('world failed')
+      expect(waiters).to be_empty
+    end
+
+    it 'cannot return a confirmed event twice' do
+      handle = described_class.arm(:answer)
+      event = described_class.emit(:answer)
+      expect(handle.wait(timeout: 1)).to equal(event)
+      expect(handle.wait(timeout: 1)).to be_nil
+      expect(handle.reason).to eq(:confirmed)
+    end
+  end
 end

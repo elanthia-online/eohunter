@@ -27,10 +27,96 @@ module EO::Engine
     #   @return [Time] when it was emitted
     Event = Struct.new(:type, :data, :at, keyword_init: true)
 
+    # A one-use subscription armed before sending a command. Captures the
+    # first correlated event, including one emitted before +wait+ starts.
+    class ArmedWait
+      # @return [Symbol, nil] :confirmed, :timeout, :interrupted, :dead or :cancelled
+      attr_reader :reason
+
+      # @param types [Array<Symbol>] event names to capture
+      # @param matcher [#call, nil] correlation filter, not a success test
+      # @param remove [#call] removes this handle from the bus
+      def initialize(types, matcher, remove)
+        @types = types
+        @matcher = matcher
+        @remove = remove
+        @mutex = Mutex.new
+        @closed = false
+      end
+
+      # Wait with a monotonic deadline and stop checks at most 50 ms apart.
+      # The timeout starts here, after the caller's send has finished.
+      # Always releases the subscription, including when a stop check raises.
+      #
+      # @param timeout [Numeric] seconds to wait
+      # @param interrupt [#call, nil] true when the engine is stopping
+      # @yield an optional predicate answering whether the character died
+      # @return [Event, nil] a correlated event, or nil; see +reason+
+      def wait(timeout:, interrupt: nil)
+        deadline = clock_now + timeout
+        loop do
+          return nil if @mutex.synchronize { @closed }
+          return finish(:interrupted) if interrupt&.call
+          return finish(:dead) if block_given? && yield
+
+          event = @mutex.synchronize { @event }
+          return finish(:confirmed, event) if event
+
+          remaining = deadline - clock_now
+          return finish(:timeout) if remaining <= 0
+
+          sleep([remaining, 0.05].min)
+        end
+      ensure
+        cancel
+      end
+
+      # Release the subscription and discard any pending event. Safe to call
+      # repeatedly, including after wait finishes or the bus resets.
+      # @return [nil]
+      def cancel
+        @mutex.synchronize do
+          @closed = true
+          @reason ||= :cancelled
+          @event = nil
+        end
+        @remove.call(self)
+        nil
+      end
+
+      # Deliver a bus emission; a broken matcher is ignored as in +await+.
+      # @api private
+      # @param event [Event]
+      # @return [void]
+      def deliver(event)
+        return unless @types.include?(event.type)
+        return if @mutex.synchronize { @closed || @event }
+        return if @matcher && !@matcher.call(event)
+
+        @mutex.synchronize { @event ||= event unless @closed }
+      rescue StandardError
+        nil
+      end
+
+      private
+
+      def clock_now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      def finish(reason, event = nil)
+        @mutex.synchronize do
+          return nil if @closed
+
+          @closed = true
+          @reason = reason
+          event
+        end
+      end
+    end
+
     @mutex = Mutex.new
     @subscribers = Hash.new { |h, k| h[k] = [] } # type => [callable, ...]
     @any_subscribers = []
-    @waiters = [] # [{types:, matcher:, queue:}]
+    @waiters = [] # ArmedWait handles
 
     class << self
       # Subscribe to one or more event types (or :any). Returns the handler
@@ -85,13 +171,23 @@ module EO::Engine
             report_subscriber_error(type, e)
           end
         end
-        waiters.each do |w|
-          next unless w[:types].include?(type)
-          next if w[:matcher] && !safe_match?(w[:matcher], event)
-
-          w[:queue] << event
-        end
+        waiters.each { |waiter| waiter.deliver(event) }
         event
+      end
+
+      # Subscribe now so a command's immediate response cannot precede its
+      # waiter. Earlier bus emissions are excluded; an upstream scanner can
+      # still deliver an older game line late. Correlate payloads where possible.
+      #
+      # @param types [Array<Symbol>] event types to capture
+      # @yield [event] optional correlation filter (not a success predicate)
+      # @yieldparam event [Event]
+      # @return [ArmedWait] a handle the caller must wait on or cancel
+      def arm(*types, &matcher)
+        remove = ->(handle) { @mutex.synchronize { @waiters.delete(handle) } }
+        waiter = ArmedWait.new(types, matcher, remove)
+        @mutex.synchronize { @waiters << waiter }
+        waiter
       end
 
       # Block until an event of one of +types+ arrives (optionally passing
@@ -104,24 +200,7 @@ module EO::Engine
       # @yieldparam event [Event]
       # @return [Event, nil] the first matching event, or nil on timeout
       def await(*types, timeout:, &matcher)
-        queue = Queue.new
-        waiter = { types: types, matcher: matcher, queue: queue }
-        @mutex.synchronize { @waiters << waiter }
-        begin
-          deadline = Time.now + timeout
-          loop do
-            remaining = deadline - Time.now
-            return nil if remaining <= 0
-
-            begin
-              return queue.pop(true)
-            rescue ThreadError
-              sleep([remaining, 0.05].min)
-            end
-          end
-        ensure
-          @mutex.synchronize { @waiters.delete(waiter) }
-        end
+        arm(*types, &matcher).wait(timeout: timeout)
       end
 
       # Errors raised by subscribers are handed to this callable (e.g. the
@@ -134,20 +213,15 @@ module EO::Engine
       #
       # @return [void]
       def reset!
-        @mutex.synchronize do
+        waiters = @mutex.synchronize do
           @subscribers.clear
           @any_subscribers.clear
-          @waiters.clear
+          @waiters.shift(@waiters.length)
         end
+        waiters.each(&:cancel)
       end
 
       private
-
-      def safe_match?(matcher, event)
-        matcher.call(event)
-      rescue StandardError
-        false
-      end
 
       def report_subscriber_error(type, error)
         error_reporter&.call(type, error)

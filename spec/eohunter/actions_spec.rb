@@ -188,6 +188,100 @@ RSpec.describe EO::Engine::Actions::Base do
     end
   end
 
+  describe '#send_and_await' do
+    let(:events) { EO::Engine::Events }
+    let(:action) { build }
+
+    before do
+      action.perform_block = ->(a) { a.send(:send_and_await, 'feed my crystal', :user_feed_result, timeout: 0) }
+    end
+    after { events.reset! }
+
+    def expect_unsubscribed
+      expect(events.instance_variable_get(:@waiters)).to be_empty
+    end
+
+    it 'arms before sending so an immediate answer is confirmed and stamped acted' do
+      event = nil
+      expect(action).to receive(:game_send).with('feed my crystal').once do
+        event = events.emit(:user_feed_result, item: 'crystal', ok: true)
+        'You feed the crystal.'
+      end
+      result = action.call
+      expect(result).to have_attributes(status: :success, event: event)
+      expect(result).to be_acted
+      expect_unsubscribed
+    end
+
+    it 'correlates the response without filtering out a negative outcome' do
+      action.perform_block = lambda do |a|
+        a.send(:send_and_await, 'feed my crystal', :user_feed_result,
+               timeout: 0, matcher: ->(event) { event.data[:item] == 'crystal' })
+      end
+      expect(action).to receive(:game_send).once do
+        events.emit(:user_feed_result, item: 'amulet', ok: true)
+        events.emit(:user_feed_result, item: 'crystal', ok: false)
+        'The crystal refuses.'
+      end
+      result = action.call
+      expect(result).to be_success
+      expect(result.event.data).to eq(item: 'crystal', ok: false)
+      expect_unsubscribed
+    end
+
+    it 'times out without retrying or accepting a pre-arm response' do
+      events.emit(:user_feed_result, item: 'crystal', ok: true)
+      expect(action).to receive(:game_send).with('feed my crystal').once.and_return('Waiting...')
+      result = action.call
+      expect(result).to have_attributes(status: :timeout, reason: :no_confirmation, event: nil)
+      expect(result).to be_acted
+      expect_unsubscribed
+    end
+
+    it 'preserves a ladder Result and its details even if an event arrived' do
+      failure = EO::Engine::Actions::Result.new(status: :failed, reason: :injured, line: 'Too injured.')
+      expect(action).to receive(:game_send).once do
+        events.emit(:user_feed_result, ok: true)
+        failure
+      end
+      expect(action.call).to equal(failure)
+      expect(failure).to have_attributes(status: :failed, reason: :injured, line: 'Too injured.', acted: true)
+      expect_unsubscribed
+    end
+
+    it 'preserves named ladder failures without waiting' do
+      expect(action).to receive(:game_send).once.and_return(:no_response)
+      expect(action.call).to have_attributes(status: :failed, reason: :no_response, acted: true)
+      expect_unsubscribed
+    end
+
+    it 'reports an interrupt that arrives while sending' do
+      stopping = false
+      allow(action).to receive(:interrupted?) { stopping }
+      expect(action).to receive(:game_send).once do
+        stopping = true
+        'Waiting...'
+      end
+      expect(action.call).to have_attributes(status: :failed, reason: :interrupted, acted: true)
+      expect_unsubscribed
+    end
+
+    it 'reports death that arrives while sending' do
+      expect(action).to receive(:game_send).once do
+        me[:dead?] = true
+        'Waiting...'
+      end
+      expect(action.call).to have_attributes(status: :failed, reason: :dead, acted: true)
+      expect_unsubscribed
+    end
+
+    it 'cancels when sending raises' do
+      expect(action).to receive(:game_send).once.and_raise('send failed')
+      expect { action.call }.to raise_error('send failed')
+      expect_unsubscribed
+    end
+  end
+
   describe 'the engine interrupt' do
     after { described_class.interrupt = nil }
 
