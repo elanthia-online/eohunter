@@ -147,6 +147,7 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(EO::Engine::Actions::Prepare).to receive(:new).with(world, name: 'target', preparations: policy.preparations).once.and_return(action)
     expect(engage).not_to receive(:soothe)
     expect(engage).not_to receive(:reaction)
+    expect(engage.tick(world)).to be_success # TARGET owns this tick
     expect(engage.tick(world)).to equal(result)
     expect(engage.tick(world)).to have_attributes(status: :skipped, reason: :condition)
     expect(stances).to be_empty
@@ -160,6 +161,7 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     action = instance_double(EO::Engine::Actions::Prepare)
     allow(action).to receive(:call).and_return(skipped, prepared)
     expect(EO::Engine::Actions::Prepare).to receive(:new).twice.and_return(action)
+    expect(engage.tick(world)).to be_success # TARGET owns this tick
     expect(engage.tick(world)).to equal(skipped)
     expect(engage.tick(world)).to equal(prepared)
     expect(calls.map(&:first)).not_to include(:attack)
@@ -167,11 +169,46 @@ RSpec.describe EO::Engine::Behaviors::Engage do
     expect(calls.map(&:first)).to include(:attack)
   end
 
+  it 'sends only TARGET in the first tick and only the preparation in the next' do
+    policy.preparations = EO::Engine::Preparations.new('crystal' => { 'perform' => 'feed my crystal', 'result' => 'user_feed_result' })
+    policy.routines = { 'a' => ['prepare crystal'] }
+    world.message_events = [:user_feed_result]
+    allow(EO::Engine::Actions::Target).to receive(:new).and_call_original
+    commands = []
+    allow_any_instance_of(EO::Engine::Actions::Target).to receive(:game_send) do |_action, command|
+      commands << command
+      'You are now targeting a kobold.'
+    end
+    allow_any_instance_of(EO::Engine::Actions::Target).to receive(:next_line).and_return('You are now targeting a kobold.')
+    allow_any_instance_of(EO::Engine::Actions::Prepare).to receive(:game_send) do |_action, command|
+      commands << command
+      EO::Engine::Events.emit(:user_feed_result)
+      'fed'
+    end
+
+    expect(engage.tick(world)).to have_attributes(status: :success, acted: true)
+    expect(commands).to eq(['target #1'])
+    commands.clear
+    expect(engage.tick(world)).to have_attributes(status: :success, reason: :prepared, acted: true)
+    expect(commands).to eq(['feed my crystal'])
+  end
+
   it 'retains the normal stance change for legacy spell preparation' do
     policy.routines = { 'a' => ['prepare spirit warding i'] }
     engage.tick(world)
     expect(stances).to eq(['defensive'])
     expect(calls).to include([:command, { command: 'prepare spirit warding i' }])
+  end
+
+  it 'does not defer a preparation when the game already has the selected target' do
+    me.current_target_id = '1'
+    policy.preparations = EO::Engine::Preparations.new('crystal' => { 'perform' => 'feed my crystal', 'result' => 'user_feed_result' })
+    policy.routines = { 'a' => ['prepare crystal'] }
+    result = EO::Engine::Actions::Result.new(status: :success, reason: :prepared)
+    action = instance_double(EO::Engine::Actions::Prepare, call: result)
+    expect(EO::Engine::Actions::Target).not_to receive(:new)
+    expect(EO::Engine::Actions::Prepare).to receive(:new).and_return(action)
+    expect(engage.tick(world)).to equal(result)
   end
 
   it 'wants control only in our room with a wanted creature' do

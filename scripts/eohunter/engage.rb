@@ -1004,6 +1004,9 @@ module EO::Engine
           switch_to(creature, world)
           probe = ensure_targeted(world)
           return probe if probe && !probe.success?
+          # The successful TARGET used this tick's send. Keep a named
+          # preparation pending so its consumptive command gets its own tick.
+          return probe if probe && named_preparation?(@routine[@cursor]&.text)
         end
         @on_fight&.call
         called = call_followers(world)
