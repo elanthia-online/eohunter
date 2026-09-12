@@ -118,6 +118,14 @@ RSpec.describe EO::Engine::Events do
       expect(waiters).to be_empty
     end
 
+    it 'rejects unbounded or invalid timeouts and still releases the subscription' do
+      [Float::INFINITY, -Float::INFINITY, Float::NAN, -1, -0.01, Complex(1, 1), '1', nil, true].each do |timeout|
+        handle = described_class.arm(:answer)
+        expect { handle.wait(timeout: timeout) }.to raise_error(ArgumentError, /timeout must be/)
+        expect(waiters).to be_empty
+      end
+    end
+
     it 'checks interrupt during a wait and unsubscribes' do
       handle = described_class.arm(:answer)
       stopping = false

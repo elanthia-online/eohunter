@@ -52,7 +52,9 @@ module EO::Engine
       # @param interrupt [#call, nil] true when the engine is stopping
       # @yield an optional predicate answering whether the character died
       # @return [Event, nil] a correlated event, or nil; see +reason+
+      # @raise [ArgumentError] unless timeout is finite, real and nonnegative
       def wait(timeout:, interrupt: nil)
+        Events.validate_timeout!(timeout)
         deadline = clock_now + timeout
         loop do
           return nil if @mutex.synchronize { @closed }
@@ -119,6 +121,18 @@ module EO::Engine
     @waiters = [] # ArmedWait handles
 
     class << self
+      # Validate a bounded wait before an action sends a consuming command.
+      # Shared with ArmedWait so direct callers have the same deadline rules.
+      #
+      # @param timeout [Numeric] seconds to wait; zero permits an immediate check
+      # @return [void]
+      # @raise [ArgumentError] unless timeout is finite, real and nonnegative
+      def validate_timeout!(timeout)
+        return if timeout.is_a?(Numeric) && timeout.real? && timeout.finite? && !timeout.negative?
+
+        raise ArgumentError, 'timeout must be a finite nonnegative real number'
+      end
+
       # Subscribe to one or more event types (or :any). Returns the handler
       # (keep it if you want to unsubscribe).
       #

@@ -280,6 +280,25 @@ RSpec.describe EO::Engine::Actions::Base do
       expect { action.call }.to raise_error('send failed')
       expect_unsubscribed
     end
+
+    it 'rejects invalid timeouts before sending or arming' do
+      expect(action).not_to receive(:game_send)
+      expect(events).not_to receive(:arm)
+      [Float::INFINITY, -Float::INFINITY, Float::NAN, -1, -0.01, Complex(1, 1), '1', nil, true].each do |timeout|
+        action.perform_block = ->(a) { a.send(:send_and_await, 'feed my crystal', :user_feed_result, timeout: timeout) }
+        expect { action.call }.to raise_error(ArgumentError, /timeout must be/)
+      end
+      expect_unsubscribed
+    end
+
+    it 'reports bus reset as cancellation rather than an elapsed timeout' do
+      expect(action).to receive(:game_send).once do
+        events.reset!
+        'Waiting...'
+      end
+      expect(action.call).to have_attributes(status: :failed, reason: :cancelled, acted: true)
+      expect_unsubscribed
+    end
   end
 
   describe 'the engine interrupt' do

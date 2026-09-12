@@ -305,15 +305,17 @@ module EO::Engine
       # @param timeout [Numeric] seconds to wait after the ladder returns
       # @param matcher [#call, nil] optional event correlation filter
       # @return [Result] the ladder failure unchanged, a confirming event,
-      #   :failed for interrupt/death, or :timeout with :no_confirmation
+      #   :failed for interrupt/death/cancellation, or :timeout with :no_confirmation
+      # @raise [ArgumentError] before sending if timeout is not finite, real and nonnegative
       def send_and_await(command, *types, timeout: DEFAULT_TIMEOUT, matcher: nil)
+        Events.validate_timeout!(timeout)
         waiter = Events.arm(*types, &matcher)
         first = send_through_ladder(command)
         return first if first.is_a?(Result)
 
         event = waiter.wait(timeout: timeout, interrupt: -> { interrupted? }) { me.dead? }
         return Result.new(status: :success, event: event) if event
-        return Result.new(status: :failed, reason: waiter.reason) if %i[interrupted dead].include?(waiter.reason)
+        return Result.new(status: :failed, reason: waiter.reason) if %i[interrupted dead cancelled].include?(waiter.reason)
 
         Result.new(status: :timeout, reason: :no_confirmation)
       ensure

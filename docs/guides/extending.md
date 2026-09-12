@@ -79,6 +79,9 @@ adds no retries. Its matcher selects the response; inspect `result.event.data`
 after confirmation to decide whether the game accepted or denied the command.
 A correlated negative response still confirms receipt. Silence returns
 `:timeout` with `:no_confirmation`; ladder failures pass through unchanged.
+Interrupt, death and bus cancellation return `:failed` with `:interrupted`,
+`:dead` or `:cancelled`. Timeouts must be finite nonnegative real numbers;
+the helper validates them before sending, and zero checks immediately.
 
 Arming excludes earlier bus emissions, but cannot establish causation if
 Lich's scanner delivers an older queued game line after arming. Match payload
