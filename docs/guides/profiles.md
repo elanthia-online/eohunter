@@ -90,6 +90,8 @@ Both paths call the same action. Routine modifiers remain the scheduling
 interface; see [Routines](routines.md). Prep/rest lists take plain `prepare NAME`
 words. Existing bare commands, including numeric `prepare 101`, retain their
 existing command path.
+In prep/rest lists, separate preparation steps with commas; named preparations
+inside an `and` array refuse loading so each preparation gets its own tick.
 When `preparations` is absent or empty, all existing command words retain their
 old meaning, including `prepare spirit warding i`. A nonempty mapping opts into
 named `prepare NAME` words; numeric spell preparation remains available, while

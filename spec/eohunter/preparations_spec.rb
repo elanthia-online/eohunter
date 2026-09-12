@@ -39,6 +39,14 @@ RSpec.describe EO::Engine::Preparations do
     expect { configured.validate_rest_mode!(nil, controlled: true) }.to raise_error(ArgumentError, /solo/)
   end
 
+  it 'rejects named preparations nested in prep/rest arrays with a usable alternative' do
+    %w[hunting_prep_commands resting_commands field_rest_commands field_hunting_prep_commands custom_fog].each do |key|
+      expect { profile({ 'crystal' => entry }, key => 'look and prepare crystal') }.to raise_error(ArgumentError, /comma-separated prepare NAME/)
+      expect { profile({ 'crystal' => entry }, key => 'prepare crystal, look') }.not_to raise_error
+    end
+    expect { profile({ 'crystal' => entry }, 'hunting_commands' => 'prepare crystal and attack') }.not_to raise_error
+  end
+
   it 'rejects invalid structures, identifiers, fields and commands at profile load' do
     [nil, [], '', false].each { |raw| expect { profile(raw) }.to raise_error(ArgumentError, /preparations/) }
     [nil, [], 'bad'].each { |raw| expect { profile('crystal' => raw) }.to raise_error(ArgumentError, /crystal/) }

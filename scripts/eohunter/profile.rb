@@ -315,6 +315,9 @@ module EO::Engine
         next unless key.include?('commands') || key == 'custom_fog'
 
         routine = key.match?(/\Ahunting_commands(?:_[b-j])?\z/) || %w[quick_commands disable_commands].include?(key)
+        if !routine && Array(entries).any? { |entry| entry.is_a?(Array) && entry.flatten.any? { |command| Preparations.name(command.to_s.strip) } }
+          raise ArgumentError, "named preparations in #{key} cannot use 'and' arrays; use comma-separated prepare NAME entries"
+        end
         Engage::Routine.parse(Array(entries).flatten).each do |line|
           if routine && line.text.match?(/\A(?:force|eachtarget|celerity|haste|506|slayer|240|tonis|1035)\b.*\bprepare\s+[a-z]/)
             raise ArgumentError, "preparations cannot use routine prefixes in #{key}; use modifiers on prepare NAME"
