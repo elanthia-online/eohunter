@@ -12,6 +12,7 @@ RSpec.describe EO::Engine::Watch do
 
   before do
     tracker.reset!
+    described_class.clear!
     EO::Engine::Events.on { |e| seen << [e.type, e.data] }
     stub_const('DownstreamHook', Class.new { def self.add(*); end; def self.remove(*); end })
     described_class.install!
