@@ -153,10 +153,13 @@ module EO::Engine
 
     # One tick: the on_tick callbacks, then (unless stopped or paused) the
     # room note, the arbiter walk, the chosen behavior's turn, the
-    # watchdogs, and the interval sleep. An exception anywhere is an
-    # :engine_error on the bus and a stop, never a crash.
+    # watchdogs, and the interval sleep. Ordinary exceptions are an
+    # :engine_error on the bus and a stop. Native execution-guard interrupts
+    # propagate to the owning supervisor; they are not engine failures.
     #
     # @return [void]
+    # @raise [Lich::Common::ScriptExecutionGuard::Interrupted] the native owner
+    #   must reconcile a refused execution scope before any further work
     def tick
       @on_tick.each { |b| b.call(@world) }
       # A callback may have stopped the engine (a lost leader, a lost
@@ -182,6 +185,10 @@ module EO::Engine
       complete_tick
       sleep(@interval) unless @stopping
     rescue StandardError => e
+      if defined?(::Lich::Common::ScriptExecutionGuard::Interrupted) && e.is_a?(::Lich::Common::ScriptExecutionGuard::Interrupted)
+        raise
+      end
+
       # Carry the backtrace: an engine_error that reports only a reason
       # ends the run with nothing to debug from. Forge frames only - the
       # Lich/gem frames below them are never where the bug is.
