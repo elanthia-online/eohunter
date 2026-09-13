@@ -99,6 +99,21 @@ module EO::Engine
     # @bigshot Event, stale attack
     STALE_AFTER = 15
 
+    # Copy the small protocol identities without retaining mutable caller state.
+    #
+    # @param value [Hash, Array, String, Numeric, Symbol, Boolean, nil] plain protocol data
+    # @return [Object] a recursively frozen copy with no mutable caller references
+    # @raise [ArgumentError] when the value contains a non-protocol object
+    def self.protocol_copy(value)
+      case value
+      when Hash then value.to_h { |key, item| [key, protocol_copy(item)] }.freeze
+      when Array then value.map { |item| protocol_copy(item) }.freeze
+      when String then value.dup.freeze
+      when Numeric, Symbol, NilClass, TrueClass, FalseClass then value
+      else raise ArgumentError, 'protocol identity must contain plain values'
+      end
+    end
+
     # The instruction itself, one per order: its type (one of ORDERS), the
     # hunt it belongs to, the room it was raised in, when, and a payload.
     #
@@ -112,7 +127,9 @@ module EO::Engine
     #   @return [Time] when the order was raised
     # @!attribute payload
     #   @return [Object, nil] the order's argument (a reason, a name, a command)
-    Order = Struct.new(:type, :hunt_id, :room, :at, :payload, keyword_init: true) do
+    # @!attribute step_id
+    #   @return [String, nil] exact strict movement episode, nil for legacy orders
+    Order = Struct.new(:type, :hunt_id, :room, :at, :payload, :step_id, keyword_init: true) do
       # Whether this order is too old or from another room to act on.
       #
       # @param room_now [Integer] the follower's current room
@@ -205,8 +222,11 @@ module EO::Engine
       )
     end
 
-    # The protocol object. Served over DRb by the leader; every method is
-    # safe to call from any thread. No game state: pure Ruby.
+    # The protocol object, served over DRb by the leader. Shared protocol state
+    # is protected by a mutex. Strict movement stores immutable participant
+    # identities and completed-owner receipts for one bounded episode; it never
+    # turns a heartbeat into fresh preparation or claims a shared game snapshot.
+    # The injected identity reader is local and must not issue game commands.
     class Hub
       include ::DRbUndumped if defined?(::DRbUndumped)
 
@@ -230,8 +250,23 @@ module EO::Engine
       attr_reader :hunt_id, :leader_name, :expected, :rooms, :last_exit
 
       # @param clock [#now] the time source, Time in the game
-      def initialize(clock: Time)
+      # @param strict_movement [Boolean] require episode-bound movement preparation
+      # @param identity_reader [#call, nil] current leader identity, required in strict mode
+      # @param monotonic [#call] receiver-local monotonic seconds for episode and receipt age
+      # @return [Hub] the unregistered protocol owner
+      # @raise [ArgumentError] when strict mode has no callable identity reader
+      def initialize(clock: Time, strict_movement: false, identity_reader: nil,
+                     monotonic: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+        raise ArgumentError, 'strict movement requires an identity reader' if strict_movement && !identity_reader.respond_to?(:call)
+
         @clock = clock
+        @strict_movement = strict_movement == true
+        @identity_reader = identity_reader
+        @monotonic = monotonic
+        @participant_identities = {}
+        @movement_sequence = 0
+        @movement = nil
+        @movement_ticks = {}
         @mutex = Mutex.new
         @hunt_id = nil
         @leader_name = nil
@@ -259,9 +294,14 @@ module EO::Engine
       # @return [String] the new hunt id
       def open_hunt(leader:, expected:, rooms: {})
         @mutex.synchronize do
+          if strict_movement? && (!expected.is_a?(Array) || expected.empty? || expected.any? { |name| name.to_s.empty? } || expected.map(&:to_s).uniq.size != expected.size)
+            raise ArgumentError, 'strict movement requires an explicit distinct named roster'
+          end
+
           @hunt_id = format('%08x', rand(2**32))
           @leader_name = leader.to_s
           @expected = expected.is_a?(Integer) ? expected : Array(expected).map(&:to_s)
+          @expected = immutable(@expected) if strict_movement?
           @rooms = rooms
           @members = {}
           @queues = {}
@@ -272,6 +312,12 @@ module EO::Engine
           @heartbeat = @clock.now
           @finished = nil
           @last_exit = nil
+          @participant_identities = {}
+          @movement = nil
+          @movement_ticks = {}
+          @leader_identity = immutable(@identity_reader.call) if strict_movement?
+          raise ArgumentError, 'leader identity unavailable' if strict_movement? && @leader_identity.nil?
+
           @hunt_id
         end
       end
@@ -433,12 +479,20 @@ module EO::Engine
       # @bigshot add_member
       # @param name [String] the follower's name
       # @param hunt_id [String] the id the follower read from hunt_id
+      # @param identity [Hash, nil] exact follower run/session identity, required in strict mode
       # @return [String] the hunt id
-      # @raise [ArgumentError] when the id is not the open hunt's, or the name is not expected
-      def register(name, hunt_id:)
+      # @raise [ArgumentError] for a wrong hunt, unexpected name, absent strict identity or replaced participant
+      def register(name, hunt_id:, identity: nil)
         @mutex.synchronize do
           raise ArgumentError, "hunt #{hunt_id} is not open" unless hunt_id == @hunt_id
           raise ArgumentError, "#{name} is not expected" unless @expected.is_a?(Integer) || @expected.include?(name.to_s)
+          if strict_movement?
+            raise ArgumentError, 'member identity unavailable' if identity.nil?
+            existing = @participant_identities[name.to_s]
+            raise ArgumentError, 'member identity changed during hunt' if existing && existing != identity
+
+            @participant_identities[name.to_s] = immutable(identity)
+          end
 
           # Registration is a bounded first-report grace period. Without
           # it, the leader can declare a follower lost in the interval
@@ -482,17 +536,152 @@ module EO::Engine
       # @param type [Symbol] the order type
       # @param name [String] the follower's name
       # @param hunt_id [String] the follower's hunt id
-      # @return [Boolean] true
+      # @return [Boolean] true when recorded; false for type-only movement acks in strict mode
       # @raise [ArgumentError] when the id is not the open hunt's
       def ack(type, name, hunt_id:)
         @mutex.synchronize do
           raise ArgumentError, "hunt #{hunt_id} is not open" unless hunt_id == @hunt_id
+          return false if strict_movement? && type == :prepare_move
 
           (@acks[type] ||= {})[name.to_s] = true
         end
       end
 
+      # This protocol records owner preparation for one movement, not a coherent
+      # game-state snapshot. Transport heartbeats never touch these receipts.
+      # Maximum receiver-local seconds from movement issuance to consumption.
+      MOVEMENT_SECONDS = 5.0
+      # Maximum receiver-local seconds since a newly advancing preparation was
+      # admitted; duplicate acknowledgments preserve their original receipt age.
+      PREPARATION_SECONDS = 1.0
+
+      # @return [Boolean] whether the episode protocol is explicitly enabled
+      def strict_movement? = @strict_movement
+
+      # Replace the current episode and queue its immutable order for every
+      # expected participant. No episode starts until the named roster is full.
+      #
+      # @param room [Integer, String] the leader's source room
+      # @param room_epoch [Integer] the leader's local native room counter
+      # @param identity [Hash] the leader identity bound to this hunt
+      # @return [Order, nil] queued preparation, or nil for unavailable identity/room/roster
+      def start_movement(room:, room_epoch:, identity:)
+        @mutex.synchronize do
+          return nil unless strict_identity?(identity) && !room.nil? && !room_epoch.nil?
+          return nil unless (@expected - @participant_identities.keys).empty?
+
+          @movement_sequence += 1
+          step_id = "#{@hunt_id}:#{@movement_sequence}".freeze
+          @movement = { id: step_id, room: room, room_epoch: room_epoch, identity: @leader_identity,
+                        participants: immutable(@participant_identities.slice(*@expected)),
+                        deadline: @monotonic.call + MOVEMENT_SECONDS, receipts: {}, epochs: {}, consumed: false }
+          order = Order.new(type: :prepare_move, hunt_id: @hunt_id, room: room, at: @clock.now,
+                            step_id: step_id, payload: immutable(room_epoch: room_epoch)).freeze
+          @expected.each { |name| @queues.fetch(name) << order }
+          order
+        end
+      end
+
+      # @param identity [Hash] the expected leader identity
+      # @return [Boolean] true while the current episode is unconsumed and unexpired
+      def movement_pending?(identity:)
+        @mutex.synchronize { movement_current?(identity) }
+      end
+
+      # Admit evidence captured after the participant's completed owner turn.
+      # Exact duplicates are idempotent without refreshing age. Tick and local
+      # room-epoch fences survive cancellation of a participant's receipt.
+      #
+      # @param name [String] the registered participant
+      # @param hunt_id [String] the hunt containing the preparation
+      # @param identity [Hash] the participant's complete bound identity
+      # @param step_id [String] the exact issued movement episode
+      # @param owner_tick [Integer] strictly advancing completed turn, positive
+      # @param room [Integer, String] participant's room at preparation
+      # @param room_epoch [Integer] participant's local native counter; not compared with the leader's
+      # @return [Boolean] true for an admitted preparation or exact duplicate
+      def acknowledge_movement(name, hunt_id:, identity:, step_id:, owner_tick:, room:, room_epoch:)
+        @mutex.synchronize do
+          return false unless hunt_id == @hunt_id && movement_current?(@leader_identity)
+          return false unless @movement[:id] == step_id && @movement[:participants][name.to_s] == identity
+          return false unless @movement[:participants].key?(name.to_s) && room == @movement[:room] && !room_epoch.nil?
+          return false unless owner_tick.is_a?(Integer) && owner_tick.positive?
+
+          candidate = immutable(identity: identity, step_id: step_id, owner_tick: owner_tick, room: room, room_epoch: room_epoch)
+          previous = @movement[:receipts][name.to_s]
+          return previous[:value] == candidate if previous && previous[:value][:owner_tick] == owner_tick
+          return false if owner_tick <= @movement_ticks.fetch(name.to_s, 0)
+          # A same-room return has a different local epoch. Epochs are local to
+          # each participant; they must never be compared across processes.
+          return false if @movement[:epochs].key?(name.to_s) && @movement[:epochs][name.to_s] != room_epoch
+
+          @movement_ticks[name.to_s] = owner_tick
+          @movement[:epochs][name.to_s] = room_epoch
+          @movement[:receipts][name.to_s] = { value: candidate, at: @monotonic.call }
+          true
+        end
+      end
+
+      # Check the complete episode roster and optionally consume its permission
+      # under the same lock. Offline participants never reduce this quorum.
+      #
+      # @param identity [Hash] the leader's complete bound identity
+      # @param room [Integer, String] current leader room
+      # @param room_epoch [Integer] current leader native room counter
+      # @param consume [Boolean] mark the episode consumed if its quorum is ready
+      # @return [Boolean] true only when every bound participant has a fresh receipt
+      def movement_ready?(identity:, room:, room_epoch:, consume: false)
+        @mutex.synchronize do
+          return false unless movement_current?(identity) && room == @movement[:room] && room_epoch == @movement[:room_epoch]
+
+          now = @monotonic.call
+          ready = @movement[:participants].all? do |name, participant|
+            receipt = @movement[:receipts][name]
+            receipt && receipt[:value][:identity] == participant && now - receipt[:at] < PREPARATION_SECONDS
+          end
+          @movement[:consumed] = true if ready && consume
+          ready
+        end
+      end
+
+      # Withdraw one participant's receipt, retaining its fences, or cancel the
+      # entire episode when called by the bound leader.
+      #
+      # @param identity [Hash] bound identity of the withdrawing member or leader
+      # @param name [String, nil] participant to withdraw; nil cancels the episode
+      # @param step_id [String, nil] exact episode to cancel; nil selects the current episode
+      # @return [Boolean] true when the identity and optional episode match
+      def cancel_movement(identity:, name: nil, step_id: nil)
+        @mutex.synchronize do
+          return false unless @movement && (step_id.nil? || @movement[:id] == step_id)
+          if name
+            return false unless @movement[:participants][name.to_s] == identity
+
+            @movement[:receipts].delete(name.to_s)
+          else
+            return false unless identity == @leader_identity
+
+            @movement = nil
+          end
+          true
+        end
+      end
+
       private
+
+      def strict_identity?(identity)
+        strict_movement? && !identity.nil? && identity == @leader_identity && @identity_reader.call == @leader_identity
+      rescue StandardError
+        false
+      end
+
+      def movement_current?(identity)
+        strict_identity?(identity) && @finished.nil? && @movement && !@movement[:consumed] && @monotonic.call < @movement[:deadline] ? true : false
+      end
+
+      def immutable(value)
+        Group.protocol_copy(value)
+      end
 
       def make_order(type, payload, room)
         raise ArgumentError, "unknown order #{type}" unless ORDERS.include?(type)
@@ -501,10 +690,10 @@ module EO::Engine
       end
     end
 
-    # The leader's view: what bigshot's leader asks its Group, answered
-    # from the followers' reports. Followers that have stopped reporting
-    # are left out of every wait (member_online 966 drops them; here
-    # they are reported lost once and waited on no more).
+    # The leader's view of follower reports and movement preparation. Legacy
+    # waits omit followers that have stopped reporting (member_online 966).
+    # Opt-in strict movement instead requires the fixed named roster, fresh
+    # completed-owner receipts and local safety checks immediately before use.
     class Leader
       # Seconds between keep_alive! heartbeats, the Hub's pulse.
       PULSE = Hub::PULSE
@@ -517,16 +706,94 @@ module EO::Engine
       #   @return [String] the leader's own name
       attr_reader :hub, :policy, :name
 
+      # Trusted owner-thread adapter receiving a movement policy and block.
+      # An already guarded runtime composes the policy into its existing
+      # native guard for exactly that block, removing it in ensure. Check
+      # outer authority first; never replace or nest its native guard.
+      # @return [#call, nil] nil uses a disposable native guard on the owner
+      attr_accessor :movement_guard_scope
+
       # @param hub [Hub] the protocol object, already opened or about to be
       # @param name [String] the leader's own name
       # @param policy [Policy] the MA Grouping settings
       # @param clock [#now] the time source
-      def initialize(hub, name:, policy: Policy.new, clock: Time)
+      # @param strict_movement [Boolean] enable preparation episodes on a strict Hub
+      # @param identity_reader [#call, nil] current complete native run/session identity
+      # @param room_epoch [#call, nil] local native room counter; defaults to World#room.count
+      # @param movement_idle [#call, nil] (World) -> true when cleanup/combat permits movement
+      # @param monotonic [#call] local monotonic seconds for completed-owner freshness
+      # @return [Leader] the leader view; strict readiness is false until movement_idle is bound
+      # @raise [ArgumentError] when strict mode lacks a strict Hub or identity reader
+      def initialize(hub, name:, policy: Policy.new, clock: Time, strict_movement: false, identity_reader: nil,
+                     room_epoch: nil, movement_idle: nil, monotonic: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+        if strict_movement && (!identity_reader.respond_to?(:call) || !hub.strict_movement?)
+          raise ArgumentError, 'strict leader requires strict hub and identity reader'
+        end
+
         @hub = hub
         @name = name.to_s
         @policy = policy
         @clock = clock
         @lost = []
+        @strict_movement = strict_movement == true
+        @identity_reader, @room_epoch_reader, @monotonic = identity_reader, room_epoch, monotonic
+        @movement_idle = movement_idle
+        @strict_identity = Group.protocol_copy(identity_reader.call) if strict_movement?
+        @owner_completion = nil
+      end
+
+      # @return [Boolean] whether this leader requires strict movement episodes
+      def strict_movement? = @strict_movement
+
+      # Bind the local cleanup/combat predicate after behaviors are constructed.
+      # Strict readiness stays false until this callback is explicitly supplied.
+      # @param reader [#call] (World) -> true only while movement work is idle
+      # @return [#call] the bound local predicate
+      # @raise [ArgumentError] unless the reader is callable
+      def movement_idle=(reader)
+        raise ArgumentError, 'movement idle reader must be callable' unless reader.respond_to?(:call)
+
+        @movement_idle = reader
+      end
+
+      # Local completed-turn evidence. Calling heartbeat! cannot refresh this.
+      # This callback copies owner state locally and performs no network I/O.
+      #
+      # @param world [World] the owner's room and native room counter
+      # @param tick [Integer] increasing completed owner-turn number
+      # @param state [Hash] Engine#status captured at completion
+      # @return [Hash, nil] the retained completion, or nil for ignored/legacy callbacks
+      def complete_owner_tick(world, tick, state)
+        return unless strict_movement?
+        return if @owner_completion && tick <= @owner_completion[:tick]
+
+        @owner_completion = { tick: tick, state: state[:state].to_s, room: world.room.id,
+                              epoch: movement_epoch(world), at: @monotonic.call }
+      end
+
+      # @return [Boolean] true while the bound leader has an outstanding usable episode
+      def movement_pending?
+        strict_movement? && @hub.movement_pending?(identity: current_identity)
+      end
+
+      # Cancel this leader's outstanding strict episode without issuing a command.
+      #
+      # @return [Boolean, nil] whether an episode was cancelled; nil in legacy mode
+      def cancel_movement!
+        @hub.cancel_movement(identity: @strict_identity) if strict_movement?
+      end
+
+      # Recheck current local authority, RT, cleanup and physical membership,
+      # then consume the fresh full-roster episode once. Legacy mode retains its
+      # existing movement predicate and does not introduce consumption state.
+      #
+      # @param world [World] the leader's current local observations
+      # @return [Boolean] true when this movement attempt owns the permission
+      def consume_movement!(world)
+        return movement_ready?(world) unless strict_movement?
+        return false unless strict_local_ready?(world)
+
+        @hub.movement_ready?(identity: current_identity, room: world.room.id, room_epoch: movement_epoch(world), consume: true)
       end
 
       # @return [String, nil] the Hub's open hunt id
@@ -635,19 +902,81 @@ module EO::Engine
       # Ask every follower to stand down and ack before the group moves.
       #
       # @param room [Integer] the room the move starts from
-      # @return [Order, nil] the prepare_move order, nil when solo
-      def prepare_movement(room)
+      # @param room_epoch [Integer, nil] native source-room counter, required in strict mode
+      # @return [Order, nil] preparation order; nil when solo or strict admission is unavailable
+      def prepare_movement(room, room_epoch: nil)
+        if strict_movement?
+          return @hub.start_movement(room: room, room_epoch: room_epoch, identity: current_identity)
+        end
+
         @hub.clear_acks(:prepare_move)
         order(:prepare_move, room: room)
       end
 
-      # Whether the group can move: everyone here, nobody in roundtime,
-      # every online follower has acked prepare_move.
+      # Whether the group can move: legacy mode checks online followers;
+      # strict mode rechecks local ownership and the full episode roster's
+      # fresh preparations without consuming the permission.
       #
       # @param world [World] the leader's world
       # @return [Boolean] true when the barrier is down
       def movement_ready?(world)
+        if strict_movement?
+          return false unless strict_local_ready?(world)
+
+          return @hub.movement_ready?(identity: current_identity, room: world.room.id, room_epoch: movement_epoch(world))
+        end
+
         all_present?(world) && !roundtime? && (online - @hub.acked(:prepare_move)).empty?
+      end
+
+      # Revalidate the full bound identity. A missing or changed identity
+      # permanently invalidates this leader view, requiring a new run.
+      #
+      # @return [Hash, nil] current matching identity, or nil once binding is lost
+      def current_identity
+        return nil if @strict_identity_lost
+
+        value = @identity_reader&.call
+        if !@strict_identity.nil? && value == @strict_identity
+          value
+        else
+          @strict_identity_lost = true
+          nil
+        end
+      rescue StandardError
+        @strict_identity_lost = true
+        nil
+      end
+
+      # Read the existing native room counter through the injected local reader
+      # or World's facade. The counter has meaning only within this process.
+      #
+      # @param world [World] native room facade used when no reader was injected
+      # @return [Integer, nil] the local room epoch, nil when its reader cannot establish one
+      def movement_epoch(world)
+        @room_epoch_reader ? @room_epoch_reader.call : world.room.count
+      end
+
+      # Check current leader observations and completed-owner freshness. This
+      # predicate does not establish coherence across native state sources.
+      #
+      # @param world [World] the owner's existing local observations
+      # @return [Boolean] true only for a live, idle owner with its full roster present
+      def strict_local_ready?(world)
+        completion = @owner_completion
+        return false unless current_identity && completion && completion[:state] == 'running'
+        return false unless @monotonic.call - completion[:at] < Hub::PREPARATION_SECONDS
+        return false unless completion[:room] == world.room.id && completion[:epoch] == movement_epoch(world)
+        return false unless world.me.in_rt? == false && world.me.in_cast_rt? == false
+        return false unless world.me.dead? == false && world.me.muckled? == false
+        return false unless @movement_idle && @movement_idle.call(world) == true
+
+        expected = @hub.expected
+        here = Array(world.room.players).map { |player| player.noun.to_s }
+        grouped = world.group_nouns
+        (expected - @hub.members).empty? && expected.all? { |name| here.include?(name) && grouped.include?(name) }
+      rescue StandardError
+        false
       end
 
       # @return [Hash{String => Report}] the last report of each online follower
@@ -849,6 +1178,8 @@ module EO::Engine
     # The follower's link to the Hub. Every call is bounded: a Hub that
     # does not answer within the deadline, or raises (the leader's Lich is
     # gone), marks the leader lost, and the caller gets the default.
+    # Strict movement adds full run/session binding and explicit episode
+    # acknowledgments. Keep-alive reports do not renew those preparations.
     class Member
       # Seconds a remote call may take before the leader counts as lost.
       DEADLINE = 3
@@ -865,7 +1196,13 @@ module EO::Engine
       # @param name [String] the follower's own name
       # @param deadline [Numeric] seconds each remote call may take
       # @param clock [#now] the time source
-      def initialize(hub, name:, deadline: DEADLINE, clock: Time)
+      # @param strict_movement [Boolean] require a strict Hub and episode acknowledgments
+      # @param identity_reader [#call, nil] current complete follower identity, required in strict mode
+      # @return [Member] an unregistered follower link
+      # @raise [ArgumentError] when strict mode has no callable identity reader
+      def initialize(hub, name:, deadline: DEADLINE, clock: Time, strict_movement: false, identity_reader: nil)
+        raise ArgumentError, 'strict member requires an identity reader' if strict_movement && !identity_reader.respond_to?(:call)
+
         @hub = hub
         @name = name.to_s
         @deadline = deadline
@@ -873,6 +1210,40 @@ module EO::Engine
         @hunt_id = nil
         @lost = false
         @state = {}
+        @strict_movement = strict_movement == true
+        @identity_reader = identity_reader
+        @strict_identity = Group.protocol_copy(identity_reader.call) if strict_movement?
+      end
+
+      # @return [Boolean] whether this member requires strict movement episodes
+      def strict_movement? = @strict_movement
+
+      # Send a locally completed and revalidated owner preparation through the
+      # existing bounded follower-to-leader call. Callers retain the exact Order.
+      #
+      # @param order [Order] issued prepare_move carrying the exact hunt and step
+      # @param owner_tick [Integer] completed local owner turn that produced preparation
+      # @param room [Integer, String] the prepared follower's room
+      # @param room_epoch [Integer] follower's own native room counter
+      # @return [Boolean] true when the Hub accepted this preparation or its exact duplicate
+      def ack_movement(order, owner_tick:, room:, room_epoch:)
+        return false unless strict_movement? && strict_identity_current? && order&.step_id && order.hunt_id == @hunt_id
+
+        remote(false) do
+          @hub.acknowledge_movement(@name, hunt_id: @hunt_id, identity: @strict_identity,
+                                   step_id: order.step_id, owner_tick: owner_tick, room: room, room_epoch: room_epoch)
+        end
+      end
+
+      # Withdraw this participant's preparation when local work invalidates it.
+      # The Hub retains sequence and room fences so replay cannot restore it.
+      #
+      # @param order [Order, nil] exact episode to withdraw, or nil for the current one
+      # @return [Boolean] true if the bound participant's withdrawal was accepted
+      def cancel_movement(order = nil)
+        return false unless strict_movement?
+
+        remote(false) { @hub.cancel_movement(identity: @strict_identity, name: @name, step_id: order&.step_id) }
       end
 
       # @return [Boolean] true once a remote call has failed or timed out
@@ -883,10 +1254,17 @@ module EO::Engine
       # @bigshot follower join
       # @return [Boolean] true when registered
       def register
+        return false if strict_movement? && !strict_identity_current?
+        return false if strict_movement? && remote(false) { @hub.strict_movement? } != true
+
         id = remote { @hub.hunt_id }
         return false if id.nil?
 
-        @hunt_id = remote { @hub.register(@name, hunt_id: id) }
+        @hunt_id = if strict_movement?
+                     remote { @hub.register(@name, hunt_id: id, identity: @strict_identity) }
+                   else
+                     remote { @hub.register(@name, hunt_id: id) }
+                   end
         !@hunt_id.nil?
       end
 
@@ -947,8 +1325,11 @@ module EO::Engine
       # @param now [Time] the clock to age attack orders against
       # @return [Array<Order>] the orders to act on, oldest first
       def orders(room:, now: @clock.now)
+        return [] if strict_movement? && !strict_identity_current?
+
         Array(remote([]) { @hub.take_orders(@name) }).select do |o|
-          o.hunt_id == @hunt_id && !(o.type == :attack && o.stale?(room, now))
+          o.hunt_id == @hunt_id && !(o.type == :attack && o.stale?(room, now)) &&
+            !(strict_movement? && o.type == :prepare_move && (o.step_id.nil? || o.room != room))
         end
       end
 
@@ -1000,6 +1381,7 @@ module EO::Engine
       # @return [Boolean]
       def leader_alive?
         return false if @lost
+        return false if strict_movement? && !strict_identity_current?
 
         remote(false) { @hub.leader_alive? } ? true : false
       end
@@ -1008,6 +1390,17 @@ module EO::Engine
       def finished_reason = remote { @hub.finished_reason }
 
       private
+
+      def strict_identity_current?
+        return false if @lost
+
+        valid = !@strict_identity.nil? && @identity_reader.call == @strict_identity
+        @lost = true unless valid
+        valid
+      rescue StandardError
+        @lost = true
+        false
+      end
 
       # A remote call with a deadline; nil (or +default+) and a lost
       # leader on any failure.
@@ -1032,6 +1425,71 @@ module EO::Engine
   end
 
   module Actions
+    # A hunting step using native Move, with a single permitted wire send.
+    # Native waits and retries remain inside a scoped execution policy.
+    class GroupMove < Move
+      # @param world [World]
+      # @param leader [Group::Leader] the existing group owner
+      # @param guard_scope [#call, nil] trusted owner-thread adapter receiving
+      #   the movement policy and a block; composes into an existing guard
+      # @param opts [Hash] Move options
+      def initialize(world, leader:, guard_scope: nil, **opts)
+        super(world, **opts)
+        @leader = leader
+        @guard_scope = guard_scope
+        @owner_thread = Thread.current
+      end
+
+      # Proc exits may issue multiple commands outside the one-step contract.
+      # @return [Actions::Result] movement result, or a skipped barrier
+      def perform
+        return Result.new(status: :skipped, reason: :unsupported_group_exit) if @way.respond_to?(:call)
+        raise ThreadError, 'group movement must run on its owner thread' unless Thread.current == @owner_thread
+
+        scope = @guard_scope || @leader.movement_guard_scope || native_guard_scope
+        return Result.new(status: :skipped, reason: :unsupported_movement_guard) unless scope
+
+        denied = sent = false
+        expected = "#{$cmd_prefix}#{@way}".freeze
+        policy = lambda do |wire|
+          if Thread.current != @owner_thread
+            denied = true
+            next false
+          end
+          next true if wire.nil?
+
+          if !sent && wire == expected && @leader.consume_movement!(@world)
+            sent = true
+            true
+          else
+            denied = true
+            false
+          end
+        end
+        scope.call(policy) do
+          raise ThreadError, 'group movement guard changed owner thread' unless Thread.current == @owner_thread
+
+          super()
+        end
+      rescue StandardError => error
+        raise unless denied && defined?(::Lich::Common::ScriptExecutionGuard::Interrupted) &&
+                     error.is_a?(::Lich::Common::ScriptExecutionGuard::Interrupted)
+
+        @acted = sent
+        Result.new(status: sent ? :failed : :skipped, reason: :movement_barrier)
+      end
+
+      private
+
+      def native_guard_scope
+        owner = ::Script.current
+        return nil unless owner.respond_to?(:with_execution_guard) && owner.respond_to?(:execution_guard_active?)
+        return nil if owner.execution_guard_active?
+
+        ->(policy, &block) { owner.with_execution_guard(policy, allow_script_starts: false, &block) }
+      end
+    end
+
     # GROUP OPEN, as bigshot sends it before every follower wait.
     #
     # @bigshot group open
@@ -1153,8 +1611,9 @@ module EO::Engine
         @movement_ready = false
       end
 
-      # @return [Integer] 15, above Engage and Rest
-      def priority = 15
+      # Strict preparation follows return, loot, hands and maintenance.
+      # @return [Integer] 45 for strict movement, otherwise the legacy 15
+      def priority = strict_movement? ? 45 : 15
 
       # Reports newly lost followers, then decides whether to hold: not
       # when solo, resting or fighting; else for a stunned or roundtimed
@@ -1164,8 +1623,13 @@ module EO::Engine
       # @return [Boolean] true when there is a reason to hold
       def wants_control?(world)
         @leader.newly_lost.each { |n| Events.emit(:follower_lost, name: n) }
-        return false if @leader.solo? || @resting.call
+        if @resting.call
+          @leader.cancel_movement! if strict_movement?
+          return false
+        end
+        return false if @leader.solo? && !strict_movement?
         if @fight.call(world)
+          @leader.cancel_movement! if strict_movement?
           reset_movement(world.room.id)
           return false
         end
@@ -1175,6 +1639,7 @@ module EO::Engine
         @reason = if EO::Engine::Survival::Predicates.group_member_stunned?(world) then :member_stunned
                   elsif @leader.roundtime? then :member_roundtime
                   elsif !@leader.all_present?(world) then :follower_missing
+                  elsif strict_movement? then strict_reason(world)
                   elsif !@movement_requested then :prepare_movement
                   elsif !@movement_ready then :movement_barrier
                   end
@@ -1190,7 +1655,11 @@ module EO::Engine
       def tick(world)
         return nil if %i[member_stunned member_roundtime].include?(@reason)
         if @reason == :prepare_movement
-          @leader.prepare_movement(world.room.id)
+          if strict_movement?
+            return nil unless @leader.prepare_movement(world.room.id, room_epoch: world.room.count)
+          else
+            @leader.prepare_movement(world.room.id)
+          end
           @movement_requested = true
           return Actions::Result.new(status: :success, reason: :prepare_movement)
         end
@@ -1212,6 +1681,14 @@ module EO::Engine
 
       private
 
+      def strict_movement? = @leader.strict_movement?
+
+      def strict_reason(world)
+        return :prepare_movement unless @leader.movement_pending?
+
+        :movement_barrier unless @leader.movement_ready?(world)
+      end
+
       def reset_movement(room)
         @movement_room = room
         @movement_requested = false
@@ -1227,6 +1704,11 @@ module EO::Engine
     #
     # @bigshot return_waypoints_ids, resting_id, hunting_id, rally_ids
     class Orders < Rest
+      # Combat, return and shutdown retain ordinary Orders preemption even
+      # when movement preparation is waiting for another behavior's cleanup.
+      PREPARATION_SUPERSEDERS = %i[attack hunting_scripts_stop prep_rest leave_group fog_return go2_waypoints go2_resting_room
+                                   resting_prep resting_scripts_start hunt_over].freeze
+
       # @return [Boolean] true once the resting scripts order has finished
       attr_reader :rest_prep_done
 
@@ -1241,9 +1723,10 @@ module EO::Engine
       # @param fog [#call, nil] (policy, reason) -> Boolean; default Rest::Fog.return
       # @param scripts [Object, nil] start(name, args), running?(name), kill(name)
       # @param stance [#call, nil] (name) -> Boolean; default Lich's Stance.change
+      # @param movement_idle [#call, nil] local cleanup/hand ownership check
       # @param clock [#now] the time source
       def initialize(member:, policy:, counters: EO::Engine::Rest::Counters.new, assist: nil, follow: nil, loot: nil, sneaky: false,
-                     travel: nil, fog: nil, scripts: nil, stance: nil, clock: Time)
+                     travel: nil, fog: nil, scripts: nil, stance: nil, movement_idle: nil, clock: Time)
         super(policy: policy, counters: counters, travel: travel, fog: fog, scripts: scripts, stance: stance, loot: nil, clock: clock)
         @member = member
         @assist = assist
@@ -1259,6 +1742,10 @@ module EO::Engine
         @room = nil
         @after = nil
         @pending_ack = nil
+        @movement_idle = movement_idle || ->(world) { !@loot&.looting? && !@assist&.owns_hands?(world) }
+        @movement_order = nil
+        @movement_candidate = nil
+        @movement_cancel = nil
       end
 
       # @return [Integer] 20, where Rest sits
@@ -1283,7 +1770,55 @@ module EO::Engine
       # @return [Boolean] true while a step, an order or an ack is pending
       def wants_control?(world)
         @queue.concat(@member.orders(room: world.room.id, now: @clock.now))
+        if strict_movement? && @queue.any? { |order| PREPARATION_SUPERSEDERS.include?(order.type) }
+          @queue.reject! { |order| order.type == :prepare_move }
+          discard_movement
+        end
+        # Do not win arbitration merely to wait for a loot child or an
+        # active hand transaction: they must retain their next turn.
+        if strict_movement? && @phase == :idle && @queue.first&.type == :prepare_move
+          return false unless movement_idle?(world)
+        end
         @phase != :idle || @queue.any? || !@pending_ack.nil?
+      end
+
+      # Record a candidate only after a real owner turn. This callback is
+      # local; the next start callback carries it over the existing Member.
+      # @param world [World]
+      # @param tick [Integer] completed owner tick
+      # @param state [Hash] completed engine status
+      # @return [void]
+      def complete_owner_tick(world, tick, state)
+        return unless strict_movement? && @movement_order
+
+        before = [world.room.id, world.room.count]
+        unless state[:state] == :running && movement_prepared?(world) && before == [world.room.id, world.room.count]
+          @movement_cancel = @movement_order
+          @movement_candidate = nil
+          return
+        end
+        @movement_candidate = { owner_tick: tick, room: before.first, room_epoch: before.last }.freeze
+      end
+
+      # Publish only previously completed work, with a current local check.
+      # Run on the owner start callback, never on a native worker thread.
+      # @param world [World]
+      # @return [Boolean] whether an acknowledgement was accepted
+      def publish_movement(world)
+        return false unless strict_movement?
+
+        if @movement_cancel
+          @member.cancel_movement(@movement_cancel)
+          @movement_cancel = nil
+        end
+        return false unless @movement_order && @movement_candidate
+        unless movement_prepared?(world)
+          @member.cancel_movement(@movement_order)
+          @movement_candidate = nil
+          return false
+        end
+
+        @member.ack_movement(@movement_order, **@movement_candidate)
       end
 
       # The step in progress; else the pending prepare_move ack once out
@@ -1313,14 +1848,41 @@ module EO::Engine
 
       def rooms = @member.rooms || {}
 
+      def strict_movement? = @member.strict_movement?
+
+      def movement_idle?(world)
+        @movement_idle.call(world) == true
+      rescue StandardError
+        false
+      end
+
+      def movement_prepared?(world)
+        @phase == :idle && @queue.empty? && movement_idle?(world) &&
+          world.me.dead? == false && world.me.muckled? == false &&
+          world.me.in_rt? == false && world.me.in_cast_rt? == false &&
+          world.room.id == @movement_order.room && world.room.count == @movement_epoch
+      end
+
+      def discard_movement
+        @movement_cancel = @movement_order if @movement_order
+        @movement_order = nil
+        @movement_candidate = nil
+      end
+
       def begin_order(world, order)
+        discard_movement if strict_movement? && @movement_order
         case order.type
         when :attack then @assist&.attack!; nil
         when :follow_now then @assist&.stand_down!; @follow&.rejoin!; nil
         when :prepare_move
           @assist&.stand_down!
           @follow&.rejoin!
-          @pending_ack = :prepare_move
+          if strict_movement?
+            @movement_order = order
+            @movement_epoch = world.room.count
+          else
+            @pending_ack = :prepare_move
+          end
           nil
         when :prep_rest
           # The leader's return cycle answers a forced rest we reported;

@@ -232,6 +232,10 @@ module EOHunter
     E::Events.on(:rest_retry) { |e| msg('warn', "trying #{e.data[:room]} again (#{e.data[:attempt]} of #{e.data[:of]})") }
     E::Events.on(:rest_stranded) { |e| msg('error', "stranded: could not reach #{e.data[:room]} from #{e.data[:here]}; resting here, not reported as rested") }
     E::Events.on(:out_of_bounds) { |e| msg('warn', "out of bounds in #{e.data[:room]}, heading for #{e.data[:hunting_room]}") }
+    E::Events.on(:coordination_return_required) do |event|
+      msg('warn', "strict group movement cannot continue: #{event.data[:reason]}; returning through Rest")
+      rest.request_return!('strict group movement unavailable') if rest.respond_to?(:request_return!)
+    end
     E::Events.on(:travel_failed) { |e| msg('error', "go2 #{e.data[:place]} failed #{e.data[:attempts]} times") }
     E::Events.on(:loot_script_started) { |e| msg('debug', "loot: #{e.data[:script]}") }
     E::Events.on(:routine_unsupported) { |e| msg('warn', "routine word not built yet, skipped: #{e.data[:command]}") }
@@ -327,14 +331,34 @@ module EOHunter
                                         owner: engage, resting: -> { rest.resting? })
     engage.on_fight { flee.engaged! }
     wander = E::Behaviors::Wander.new(policy: wander_policy, targets_policy: targets_policy, walker: walker,
-                                      area: area, tracking: tracking, travel: travel, state: engage_state)
+                                      area: area, tracking: tracking, travel: travel, state: engage_state, movement: leader)
     behaviors = { survival: survival, cleanse: cleanse, flee: flee, rest: rest, loot: loot, loadout: loadout,
                   maintain: maintain, engage: engage, wander: wander, area: area, rest_policy: rest_policy }
     if leader
+      if profile['group_strict_movement']
+        leader.movement_idle = lambda do |w|
+          !rest.resting? && !loot.looting? && !engage.owns_hands?(w) && !E::Wander::Predicates.fight_here?(w, targets_policy, wander_policy)
+        end
+      end
       behaviors[:muster] = E::Behaviors::Muster.new(leader: leader, resting: -> { rest.resting? },
                                                     fight: ->(w) { E::Wander::Predicates.fight_here?(w, targets_policy, wander_policy) })
     end
     behaviors
+  end
+
+  # Bind movement evidence to real completed owner turns. The completed
+  # callback captures only local state; follower publication happens at the
+  # next ordinary start callback, never in a native observer worker.
+  # @param engine [E::Engine] the exact local engine
+  # @param leader [E::Group::Leader, nil] strict local leader
+  # @param orders [E::Behaviors::Orders, nil] strict follower's orders
+  # @return [void]
+  def self.wire_movement(engine, leader: nil, orders: nil)
+    return unless leader || orders
+
+    capture = leader || orders
+    engine.on_tick_completed { |w, tick, state| capture.complete_owner_tick(w, tick, state) }
+    engine.on_tick { |w| orders.publish_movement(w) } if orders
   end
 
   # One observation of the character for the controller's guard: session
@@ -419,9 +443,10 @@ module EOHunter
   # @param profile [E::Profile]
   # @param world [E::World]
   # @param member [E::Group::Member] our registration with the leader's hub
+  # @param scripts [E::Controller::ChildScripts, nil] exact owned child adapter
   # @return [Hash{Symbol => Object}] the behaviors by name, plus :rest_policy,
   #   :counters and :sneaky for the follower's reports
-  def self.build_follower(profile, world, member)
+  def self.build_follower(profile, world, member, scripts: nil)
     untargetable = Array(CharSettings['untargetable'])
     targets_policy = profile.targets_policy(untargetable: untargetable)
     targets_policy.boon_abilities = E::Targets::BoonCache.new(world)
@@ -430,17 +455,19 @@ module EOHunter
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
     rest_policy = profile.rest_policy(wounded_binding: binding)
-    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy, counters: counters, follower: true)
+    travel = scripts && ->(room) { E::Travel::Trip.new(room, scripts: scripts) }
+    loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy,
+                                  counters: counters, follower: true, scripts: scripts)
     assist = E::Behaviors::Assist.new(member: member, policy: profile.engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
                                       mstrike_policy: profile.mstrike_policy, maintain_state: maintain_state)
-    follow = E::Behaviors::Follow.new(member: member)
+    follow = E::Behaviors::Follow.new(member: member, travel: travel)
     orders = E::Behaviors::Orders.new(member: member, policy: rest_policy, counters: counters, assist: assist, follow: follow, loot: loot,
-                                      sneaky: wander_policy.sneaky)
+                                      sneaky: wander_policy.sneaky, scripts: scripts, travel: travel)
     loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
                                         owner: assist, resting: -> { orders.resting? })
     cleanse_policy = E::Cleanse::Policy.load(File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'), char_settings: CharSettings.to_hash)
     cleanse_policy.troubadours_rally = profile['troubadours_rally']
-    cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy)
+    cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy, travel: travel)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { orders.resting? }, follower: true)
     flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker,
                                   group_nouns: -> { world.group_nouns },
@@ -480,6 +507,35 @@ module EOHunter
     area.location_changes.each { |c| msg('warn', "area crosses into #{c[:location]} at room #{c[:id]}") } if area.too_big?
   end
 
+  # A strict run pins the native reader and parser workers, plus its Script
+  # owner. A reconnect or owner replacement invalidates this reader rather
+  # than silently inheriting an earlier movement acknowledgment. This is an
+  # identity fence, not a coherent observation of all native game fields.
+  #
+  # @return [Proc] returns a frozen identity Hash, or nil after invalidation
+  def self.group_identity_reader
+    require 'securerandom'
+    owner = Script.current
+    unless owner.respond_to?(:with_execution_guard) && owner.respond_to?(:execution_guard_active?)
+      raise ArgumentError, 'strict group movement requires native per-send Script execution guards'
+    end
+    parser = Game.thread
+    reader = Game.reader_thread
+    game = XMLData.game.to_s.dup.freeze
+    character = Char.name.to_s.dup.freeze
+    raise ArgumentError, 'strict group movement needs live native connection workers and a Script owner' unless owner && parser&.alive? && reader&.alive?
+
+    identity = { game: game, character: character, incarnation: SecureRandom.hex(16).freeze,
+                 connection_generation: 1, run_id: SecureRandom.hex(16).freeze }.freeze
+    valid = true
+    lambda do
+      valid &&= Script.list.include?(owner) && Game.thread.equal?(parser) && Game.reader_thread.equal?(reader) &&
+                parser.alive? && reader.alive? && !Game.closed? && !Game.remote_eof? &&
+                XMLData.game.to_s == game && Char.name.to_s == character
+      valid ? identity : nil
+    end
+  end
+
   # bigshot head: group open, serve the hub, whisper the uri
   # to the group until everyone expected has registered. Exits the script
   # with no group to lead or when the rally times out.
@@ -494,6 +550,11 @@ module EOHunter
     # The Hub is served on the loopback address unless the profile's
     # group spans machines: 'head 2 lan' opts back in to all interfaces.
     lan = args.reject! { |a| a.to_s.casecmp('lan').zero? } ? true : false
+    strict = profile['group_strict_movement']
+    if strict && (lan || args.empty? || args.any? { |arg| !arg.to_s.match?(/\A[A-Za-z]+\z/) })
+      raise ArgumentError, 'strict group movement requires explicit follower names on this machine: head <name> <name>'
+    end
+    identity_reader = group_identity_reader if strict
     E::Actions::GroupOpen.new(world).call
     E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
     expected = if args.first.to_s =~ /\A\d+\z/ then args.first.to_i
@@ -506,7 +567,7 @@ module EOHunter
       msg('error', 'no group to lead: ;eohunter <profile> head <count> or head <name> <name>')
       exit
     end
-    hub = E::Group::Hub.new
+    hub = E::Group::Hub.new(strict_movement: strict, identity_reader: identity_reader)
     # A nil URI binds every interface, so anyone who can reach the port
     # can drive a follower through the Hub: it answers orders with no
     # authentication, and Order carries a :command type that runs an
@@ -531,7 +592,8 @@ module EOHunter
     end
     hub.activate!
     msg('info', "group: #{hub.members.join(', ')}")
-    E::Group::Leader.new(hub, name: Char.name, policy: profile.group_policy)
+    E::Group::Leader.new(hub, name: Char.name, policy: profile.group_policy,
+                          strict_movement: strict, identity_reader: identity_reader)
   end
 
   # bigshot tail: the rally whisper names the uri unless
@@ -541,9 +603,11 @@ module EOHunter
   #
   # @bigshot tail
   # @param args [Array<String>] an optional druby:// uri
+  # @param strict_movement [Boolean] require the strict same-host movement protocol
   # @return [E::Group::Member] our registration, once the hunt is active
   #   or the wait for it timed out
-  def self.follow(args)
+  def self.follow(args, strict_movement: false)
+    identity_reader = group_identity_reader if strict_movement
     uri = args.first.to_s =~ %r{\Adruby://} ? args.first : nil
     unless uri
       hook = proc do |line|
@@ -560,9 +624,12 @@ module EOHunter
         exit
       end
     end
+    if strict_movement && !uri.to_s.match?(%r{\Adruby://127\.0\.0\.1:[0-9]+\z})
+      raise ArgumentError, 'strict group movement accepts only a local loopback leader'
+    end
     DRb.start_service
     hub = DRbObject.new_with_uri(uri)
-    member = E::Group::Member.new(hub, name: Char.name)
+    member = E::Group::Member.new(hub, name: Char.name, strict_movement: strict_movement, identity_reader: identity_reader)
     msg('info', "joining the group at #{uri}")
     120.times do
       break if member.register
@@ -658,10 +725,11 @@ profile.validate_rest_mode!(mode, controlled: !controlled.nil?, bounty: bounty_m
 
 if mode == 'tail'
   exit if dry
-  member = EOHunter.follow(mode_args)
+  member = EOHunter.follow(mode_args, strict_movement: profile['group_strict_movement'])
   behaviors = EOHunter.build_follower(profile, world, member)
   engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :loadout, :maintain, :engage, :wander))
   EOHunter.wire(engine, behaviors)
+  EOHunter.wire_movement(engine, orders: behaviors[:rest]) if member.strict_movement?
   checked_at = Time.now
   encumbrance = EO::Engine::Rest::Encumbrance.new(seconds: profile['encumbrance_grace_seconds'])
   engine.on_tick do |w|
@@ -718,6 +786,7 @@ EOHunter.wire(engine, behaviors)
 rest = behaviors[:rest]
 engage = behaviors[:engage]
 if leader
+  EOHunter.wire_movement(engine, leader: leader) if leader.strict_movement?
   engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) }
   # the heartbeat again between ticks, so a blocking action never reads as a dead leader
   leader.keep_alive!

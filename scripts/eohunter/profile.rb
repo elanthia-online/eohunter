@@ -72,7 +72,7 @@ module EO::Engine
       # MA Grouping
       'independent_travel' => [:bool, false], 'independent_return' => [:bool, false], 'group_deader' => [:bool, false],
       'ma_looter' => [:string, nil], 'never_loot' => [:split_xx, []], 'random_loot' => [:bool, false], 'quiet_followers' => [:bool, true],
-      'group_fried_trigger' => [:split, ['any']]
+      'group_fried_trigger' => [:split, ['any']], 'group_strict_movement' => [:bool, false]
     }.freeze
 
     # The profile's name (the YAML's basename) and every RULES key with
