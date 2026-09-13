@@ -110,8 +110,8 @@ module EO::Engine
         end
         if revoked? || @engine.stopping?
           fail_closed('authority_or_safety_lost')
-        elsif lease_expired?
-          fail_closed('hold_lease_expired')
+        elsif hold_window_expired?
+          fail_closed('hold_window_expired')
         elsif @pending
           apply(@pending)
         end
@@ -131,7 +131,7 @@ module EO::Engine
             @applying[:denied_reason] = 'already_held'
           else
             @engine.pause!(owner: @hold_owner)
-            @applying[:lease_deadline] = @clock.call + HOLD_SECONDS
+            @applying[:hold_deadline] = @clock.call + HOLD_SECONDS
           end
         elsif !@active || @active[:request_id] != request[:arguments]['hold_id']
           @applying[:denied_reason] = 'hold_mismatch'
@@ -147,8 +147,8 @@ module EO::Engine
         @tick = tick
         return unless @started && !@closed
 
-        if lease_expired?
-          fail_closed('hold_lease_expired')
+        if hold_window_expired?
+          fail_closed('hold_window_expired')
           return
         end
         settle_applied(tick, state) if @applying
@@ -166,7 +166,7 @@ module EO::Engine
         elsif request[:operation] == 'hold'
           @grant.settle(request_id: request[:request_id], owner_tick: tick, outcome: :succeeded,
                         result: { engine_state: state[:state].to_s }, cleanup: :pending)
-          @active = { request_id: request[:request_id], lease_deadline: request[:lease_deadline] }
+          @active = { request_id: request[:request_id], hold_deadline: request[:hold_deadline] }
         else
           @grant.settle(request_id: request[:request_id], owner_tick: tick, outcome: :succeeded,
                         result: { engine_state: state[:state].to_s }, cleanup: :complete)
@@ -175,9 +175,9 @@ module EO::Engine
         end
       end
 
-      def lease_expired?
+      def hold_window_expired?
         held = @active || (@applying if @applying && @applying[:operation] == 'hold')
-        held && @clock.call >= held[:lease_deadline]
+        held && @clock.call >= held[:hold_deadline]
       end
 
       def revoked?

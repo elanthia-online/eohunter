@@ -102,11 +102,11 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
     expect(engine.paused?).to be true
   end
 
-  it 'stops and completes cleanup when the fixed hold lease expires' do
+  it 'stops and completes cleanup when the fixed hold window expires' do
     apply_hold
     now[0] += described_class::HOLD_SECONDS
     engine.tick
-    expect(engine.stop_reason).to eq(:hold_lease_expired)
+    expect(engine.stop_reason).to eq(:hold_window_expired)
     expect(result).to include(outcome: 'succeeded', cleanup: 'complete')
     expect(engine.paused?).to be false
   end

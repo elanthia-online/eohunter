@@ -51,8 +51,9 @@ integration needs a separate policy review, not removal of this check as setup.
   `settled` with a separate outcome and cleanup state. It records the exact owner
   and peer generations, owner tick, and effective engine state; it is not an
   assertion of current game readiness or observed game action.
-- `hold` has a fixed 15-second lease from owner application. A second hold is
-  refused until the first is released. No renewal operation in this pilot.
+- `hold` has a fixed 15-second local safety window from owner application. A
+  second hold is refused until the first is released. There is no renewal
+  operation in this pilot.
 - Expired tickets cannot first execute. Late duplicates can read their existing
   result but cannot execute again. Conflicting reuse of an ID is refused.
 - The native Module keeps a bounded receipt table and never evicts replay
@@ -61,6 +62,14 @@ integration needs a separate policy review, not removal of this check as setup.
 
 The receiver-issued ticket bounds issuance-to-use, NOT the age of a human's
 original intent. Authentication does not supply freshness or idempotency.
+
+This local hold window is not the generalized resource-lease Interface proposed
+after pressure-testing the coordination contract with a production DR consumer.
+It neither arbitrates a contended resource nor transfers ownership. Expiry stops
+the empty engine and begins truthful cleanup; it never resumes autonomous work.
+Future resource leases need their own acquire/renew/release/reclaim lifecycle,
+atomic storage Adapter and fencing generation. EOHunter remains only a consumer
+of that contract and must not embed transport or allocation policy.
 
 ## Owner and failure rules
 
@@ -77,7 +86,7 @@ leaving the declared room, death, or a reconnect fail closed. The caller must
 provide a local connection/eligibility reader, and wire it to the real session
 owner. The pilot cannot infer a game reconnect from an open socket.
 
-A lost grant, endpoint closure, or expired active lease stops the empty engine
+A lost grant, endpoint closure, or expired active hold window stops the empty engine
 on its next owner tick; it does not resume into autonomous work. Manual holds
 remain intact. A stalled owner stays held but cannot acknowledge expiry or
 cleanup until it ticks again. Network timeout, operation expiry, and completed
@@ -96,7 +105,7 @@ observation then, not a live status poll.
 2. Pending before owner tick; applied only after completion; zero game sends.
 3. Duplicate delivery, conflicting IDs, expired first delivery, bounded capacity.
 4. Exact release target, wrong peer/token/run/generation, closed owner.
-5. Reconnect, safety loss, grant closure and lease expiry stop without auto-resume.
+5. Reconnect, safety loss, grant closure and hold expiry stop without auto-resume.
 6. A manual hold arriving during a peer hold survives peer release.
 7. Paired native socket test, then two independent processes with explicit tokens.
 8. Safe-room live smoke only after installing the tested build and verifying both
@@ -109,7 +118,7 @@ not make shared movement readiness coherent or enable group travel.
 
 Point `LICH_COORDINATION_ROOT` at a checkout containing the coordinated-
 operations Module stacked after lich-5 #1613 (tested commit
-`f44271a7`), and `LICH_EXECUTION_GUARD_ROOT` at lich-5 #1575, then run:
+`a4182d82`), and `LICH_EXECUTION_GUARD_ROOT` at lich-5 #1575, then run:
 
 ```sh
 LICH_COORDINATION_ROOT=/path/to/lich-5 \
