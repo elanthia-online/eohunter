@@ -1565,13 +1565,27 @@ module EO::Engine
 
         unless leader_here?(world)
           room = @member.leader_room
-          return Actions::Result.new(status: :failed, reason: :no_leader_room) if room.nil?
-          return Actions::Result.new(status: :success, reason: :leader_room) if room == world.room.id
+          current_room = world.room.id
+          # Native map resolution can yield while group movement fills the
+          # new room's PC list. Recheck presence after that read before using
+          # a cached leader destination that may still name the previous room.
+          unless leader_here?(world)
+            return Actions::Result.new(status: :failed, reason: :no_leader_room) if room.nil?
+            return Actions::Result.new(status: :success, reason: :leader_room) if room == current_room
 
-          case EO::Engine::Travel.step(self, @travel, room, world)
-          when :underway then return nil
-          when :arrived then return Actions::Result.new(status: :success, reason: :arrived)
-          else return Actions::Result.new(status: :failed, reason: :could_not_reach)
+            case EO::Engine::Travel.step(self, @travel, room, world)
+            when :underway then return nil
+            when :arrived then return Actions::Result.new(status: :success, reason: :arrived)
+            else return Actions::Result.new(status: :failed, reason: :could_not_reach)
+            end
+          end
+        end
+        if @trip
+          if @trip.place.to_s == world.room.id.to_s
+            # Arrival still belongs to go2 until its equipment cleanup ends.
+            return nil if EO::Engine::Travel.step(self, @travel, @trip.place, world) == :underway
+          else
+            cancel!
           end
         end
         return Actions::Join.new(world, leader: @member.leader_name).call unless grouped?(world)
