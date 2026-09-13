@@ -139,6 +139,25 @@ RSpec.describe EO::Engine::Behaviors::Engage do
 
   after { EO::Engine::Events.reset! }
 
+  it 'passes by a creature met outside the hunting area' do
+    area = instance_double(EO::Engine::Wander::Area, built?: true)
+    allow(area).to receive(:include?) { |id| id.to_i == 1 }
+    roamer = described_class.new(policy: policy, targets_policy: tp, area: area, stance: ->(_s) { true })
+    expect(roamer.wants_control?(world)).to be true
+    room.id = 50
+    expect(roamer.wants_control?(world)).to be false
+  end
+
+  it 'finishes a fight already under way when the room is out of area' do
+    area = instance_double(EO::Engine::Wander::Area, built?: true)
+    allow(area).to receive(:include?) { |id| id.to_i == 1 }
+    state = EO::Engine::Engage::State.new
+    roamer = described_class.new(policy: policy, targets_policy: tp, area: area, state: state, stance: ->(_s) { true })
+    room.id = 50
+    state.fight_room = 50
+    expect(roamer.wants_control?(world)).to be true
+  end
+
   it 'wants control only in our room with a wanted creature' do
     expect(engage.wants_control?(world)).to be true
     world[:claim_mine?] = false

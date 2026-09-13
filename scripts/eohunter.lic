@@ -321,7 +321,7 @@ module EOHunter
     engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
                                       mstrike_policy: profile.mstrike_policy, state: engage_state,
                                       maintain_state: maintain_state, group: leader,
-                                      fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) },
+                                      fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) }, area: area,
                                       routine_selector: trial && trial.method(:select))
     loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
                                         owner: engage, resting: -> { rest.resting? })
