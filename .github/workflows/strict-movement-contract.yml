@@ -1,0 +1,30 @@
+name: strict movement native contract
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  native-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # Pin lich-5 #1575, independently of the read-only coordination #1613
+      # dependency inherited through Hunter #111. No installed local build.
+      - uses: actions/checkout@v4
+        with:
+          repository: elanthia-online/lich-5
+          ref: e4a55e1cd906e843b10811a625dc9ab0d2364cf8
+          path: .guard-lich
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - run: bundle exec rspec spec/eohunter/strict_group_native_guard_spec.rb spec/eohunter/group_trial_spec.rb spec/eohunter/engine_spec.rb
+        env:
+          LICH_EXECUTION_GUARD_ROOT: ${{ github.workspace }}/.guard-lich
