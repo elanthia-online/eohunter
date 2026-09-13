@@ -351,14 +351,11 @@ module EOHunter
     room = Room.current&.id
     hands = [GameObj.right_hand, GameObj.left_hand].map { |item| item&.id&.to_s }
     alive = !Lich::Gemstone::Status.dead? && Char.health.to_i.positive? && Char.spirit.to_i.positive?
-    # The hostile flag lives on Lich's CreatureInstance (crtrStatus), not
-    # on the GameObj room object, so ask the creature registry for it.
-    hostile = Array(GameObj.targets).any? || Array(GameObj.hidden_targets).any? || Lich::Gemstone::Overwatch.hiders? || Array(GameObj.npcs).any? do |npc|
-      next false if npc.status.to_s =~ /dead|gone/
-
-      instance = Lich::Gemstone::Creature[npc.id.to_s]
-      instance.respond_to?(:crtr_flag?) && instance.crtr_flag?(:hostile) == true
-    end
+    # Creature owns current-room membership, target validity and hostility.
+    # GameObj.hidden_targets also includes the game's sticky last-selected
+    # dropdown, which can follow a departed creature across multiple rooms.
+    # Keep Overwatch's independent positive hiding observation as a veto.
+    hostile = Lich::Gemstone::Creature.targets.any? || Lich::Gemstone::Overwatch.hiders?
     stable = room && room != 4 && epoch == XMLData.room_count && room == Room.current&.id
     {
       session: "#{session}:#{XMLData.game}:#{Char.name}", room_id: room, room_epoch: epoch,

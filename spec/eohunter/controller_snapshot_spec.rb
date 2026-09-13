@@ -22,14 +22,19 @@ RSpec.describe 'EOHunter controller refuge observation' do
     stub_const('Lich::Gemstone::Overwatch', OpenStruct.new(hiders?: false))
     allow(Script).to receive(:list).and_return([owner])
     stub_const('Lich::Gemstone::Status', OpenStruct.new(dead?: false))
-    stub_const('Lich::Gemstone::Creature', {})
+    stub_const('Lich::Gemstone::Creature', OpenStruct.new(targets: []))
   end
 
   def snapshot = adapter.controller_snapshot(owner, 'test-session')
 
-  it 'accepts a stable empty room but rejects creatures known only through the combat dialog' do
+  it 'accepts an empty native room roster despite a sticky last-selected combat dropdown' do
     expect(snapshot[:destination_safe]).to be true
     gameobj.hidden_targets = ['99']
+    expect(snapshot[:destination_safe]).to be true
+  end
+
+  it 'rejects a native hostile room member even without a visible GameObj target' do
+    Lich::Gemstone::Creature.targets = [OpenStruct.new(id: '99')]
     expect(snapshot[:destination_safe]).to be false
   end
 
@@ -38,17 +43,17 @@ RSpec.describe 'EOHunter controller refuge observation' do
     expect(snapshot[:destination_safe]).to be false
   end
 
-  it "reads death from Lich's Status and the hostile flag from the creature registry" do
+  it "reads death from Lich's Status independently of the room roster" do
     Lich::Gemstone::Status[:dead?] = true
     expect(snapshot[:alive]).to be false
     Lich::Gemstone::Status[:dead?] = false
 
-    gameobj.npcs = [OpenStruct.new(id: '42', status: '')]
     expect(snapshot[:destination_safe]).to be true
-    Lich::Gemstone::Creature['42'] = Object.new.tap { |c| c.define_singleton_method(:crtr_flag?) { |_key| true } }
-    expect(snapshot[:destination_safe]).to be false
-    gameobj.npcs = [OpenStruct.new(id: '42', status: 'dead')]
-    expect(snapshot[:destination_safe]).to be true
+  end
+
+  it 'does not turn a failed native roster read into a safe room' do
+    allow(Lich::Gemstone::Creature).to receive(:targets).and_raise('roster unavailable')
+    expect { snapshot }.to raise_error('roster unavailable')
   end
 
   it 'rejects a room transition during observation' do
