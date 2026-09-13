@@ -46,6 +46,8 @@ module EO::Engine
       @last_evaluations = []
       @holder = nil
       @on_tick = []
+      @on_tick_completed = []
+      @completed_ticks = 0
     end
 
     # Fires inside each budgeted behavior's window right now, `{name => count}`.
@@ -69,6 +71,20 @@ module EO::Engine
     # @return [Proc] the block, as registered
     def on_tick(&block)
       @on_tick << block
+      block
+    end
+
+    # Observe the owner's completed turn, after arbitration and watchdogs.
+    # Paused turns complete after handing off control; aborted turns do not.
+    # The callback must only copy local state and must not perform network I/O.
+    #
+    # @yield [world, tick, status] after a completed turn, before the interval sleep
+    # @yieldparam world [World]
+    # @yieldparam tick [Integer] increasing completed-turn number in this engine
+    # @yieldparam status [Hash] the owner's status at completion
+    # @return [Proc] the block, as registered
+    def on_tick_completed(&block)
+      @on_tick_completed << block
       block
     end
 
@@ -137,6 +153,7 @@ module EO::Engine
 
       if @paused
         hand_off(nil)
+        complete_tick
         sleep(@interval)
         return
       end
@@ -150,6 +167,7 @@ module EO::Engine
       else
         idle
       end
+      complete_tick
       sleep(@interval) unless @stopping
     rescue StandardError => e
       # Carry the backtrace: an engine_error that reports only a reason
@@ -162,6 +180,14 @@ module EO::Engine
     end
 
     private
+
+    def complete_tick
+      @completed_ticks += 1
+      return if @on_tick_completed.empty?
+
+      completed_status = status
+      @on_tick_completed.each { |callback| callback.call(@world, @completed_ticks, completed_status) }
+    end
 
     # The room transition, seen here before any behavior is chosen, so
     # the room-scoped state (Engage's (room) commands, Loot's looted
