@@ -3,21 +3,19 @@
 module EO::Engine
   # Opt-in coordination adapters; loading them never starts a listener.
   module Coordination
-    # Explicit, safe-room-only hold/release experiment. Native transport workers
-    # reserve requests; the existing empty engine applies them on its owner tick.
-    # Not a hunting controller, and not loaded with a listener by default.
+    # Safe-room hold/release policy over Lich's generic coordinated-operations
+    # interface. Lich owns delivery, identity, replay and receipt mechanics;
+    # this adapter alone decides when EOHunter may pause or resume.
     class HoldPilot
-      # Maximum reservations retained for the entire grant (no replay eviction).
-      CAPACITY = 32
-      # Receiver-local seconds allowed between ticket issuance and application.
-      TICKET_SECONDS = 5.0
-      # Fixed hold lifetime; expiry stops the pilot rather than resuming it.
+      # Fixed hold lifetime; expiry stops the pilot rather than resuming work.
       HOLD_SECONDS = 15.0
-      # Wire contract separate from the read-only coordination protocol.
-      VERSION = 1
+      OPERATIONS = {
+        'hold'    => { required: [], optional: [] },
+        'release' => { required: ['hold_id'], optional: [] }
+      }.freeze
 
       # The caller owns the Session's connection lifecycle and must close this
-      # pilot in ensure on the same thread. Eligibility is a local-only reader;
+      # adapter in ensure on the same thread. Eligibility is a local-only reader;
       # it must positively establish the connection and additional safety checks.
       #
       # @param engine [Engine] an empty engine, never an active hunting engine
@@ -27,241 +25,197 @@ module EO::Engine
       # @param safe_room [Integer] explicitly designated refuge
       # @param eligible [#call] returns true for a connected, locally eligible World
       # @param clock [#call] local monotonic seconds
-      # @raise [ArgumentError] unavailable native protocol or invalid pilot scope
+      # @raise [ArgumentError] unavailable native interface or invalid adapter scope
       def initialize(engine:, session:, peer:, control_token:, safe_room:, eligible:,
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
-        unless defined?(::Lich::InternalAPI::Coordination::Schema)
-          raise ArgumentError, 'load the native coordination prototype first'
-        end
-        @schema = ::Lich::InternalAPI::Coordination::Schema
+        operations = native_operations
+        schema = ::Lich::InternalAPI::Coordination::Schema
         unless engine.status[:behaviors].empty? && !engine.stopping? &&
-               @schema.identity?(session.identity) && @schema.identity?(peer) &&
-               @schema.string?(control_token) && safe_room.is_a?(Integer) && safe_room.positive? &&
+               schema.identity?(session.identity) && schema.identity?(peer) &&
+               schema.string?(control_token) && safe_room.is_a?(Integer) && safe_room.positive? &&
                eligible.respond_to?(:call)
-          raise ArgumentError, 'hold pilot requires an empty engine and explicit safe-room grant'
+          raise ArgumentError, 'hold adapter requires an empty engine and explicit safe-room grant'
         end
 
         @engine, @session, @eligible, @clock = engine, session, eligible, clock
-        @identity, @peer = copy(session.identity), copy(peer)
-        @token, @safe_room = control_token.dup.freeze, safe_room
+        @identity, @safe_room = schema.immutable(session.identity), safe_room
         @thread = Thread.current
         @hold_owner = Object.new.freeze
-        @mutex = Mutex.new
-        @entries = {}
+        @grant = operations::Grant.new(session: session, peer: peer, control_token: control_token,
+                                       operations: OPERATIONS, enabled: true, clock: clock)
+        @revocation_mutex = Mutex.new
+        @revoked = false
         @closed = false
         @started = false
+        @pending = nil
+        @applying = nil
         @active = nil
         @tick = 0
         engine.on_tick { |world| owner_tick(world) }
         engine.on_tick_completed { |_world, tick, state| confirm(tick, state) }
       end
 
-      # Start a separate explicitly granted endpoint. No native discovery write.
-      # @return [Hash] token-free descriptor for this control grant
+      # Start the native, explicitly granted endpoint. No discovery write.
+      # @return [Hash] token-free descriptor for this exact control grant
       def start
         assert_owner!
-        raise ArgumentError, 'pilot closed' if @closed
+        raise ArgumentError, 'adapter closed' if @closed
+        raise 'native operation grant did not start' unless @grant.start
 
-        @server ||= ::Lich::InternalAPI::ActiveSessions::Server.new(
-          host: '127.0.0.1', port: 0, registry: nil, auth_token: @token,
-          request_handler: method(:route), max_frame_bytes: 16_384, max_clients: 4, timeout: 0.25
-        )
-        @server.start
         @started = true
-        copy(protocol_version: VERSION, host: @server.host, port: @server.port,
-             identity: @identity, peer: @peer)
+        @grant.descriptor
       end
 
-      # Local revocation is thread-safe. It does not claim the owner has stopped.
-      # No further admissions; the next owner tick performs cleanup.
+      # Close admission from any thread. The next owner tick performs EOHunter
+      # cleanup and reports it through the native receipt.
       # @return [nil]
       def revoke
-        @mutex.synchronize { @closed = true }
+        @grant.revoke('adapter_revoked')
+        @revocation_mutex.synchronize { @revoked = true }
         nil
       end
 
-      # Explicit owner-thread teardown; native Script still owns script lifetime.
-      # Network shutdown happens outside the receipt lock.
+      # Explicit owner-thread teardown; the engine retains policy ownership.
       # @return [nil]
       def close
         assert_owner!
-        @mutex.synchronize { fail_closed('pilot_closed') }
-        @server&.stop
+        fail_closed('adapter_closed') unless @closed
+        @grant.close
         nil
       end
 
       private
 
-      def route(request)
-        @mutex.synchronize do
-          return failure('invalid_request') unless @schema.exact_keys?(request, %i[command auth payload])
+      def native_operations
+        return ::Lich::InternalAPI::Coordination::Operations if defined?(::Lich::InternalAPI::Coordination::Operations::Grant)
 
-          payload = request[:payload]
-          return failure('invalid_request') unless payload.is_a?(Hash)
-          return failure('identity_mismatch') unless payload[:identity] == @identity && payload[:peer] == @peer
-          return failure('protocol_mismatch') unless payload[:protocol_version] == VERSION
-
-          required = %i[protocol_version identity peer request_id]
-          required += %i[operation hold_id] if request[:command] == 'ticket'
-          required += [:ticket] if request[:command] == 'submit'
-          return failure('invalid_request') unless @schema.exact_keys?(payload, required) &&
-                                                   @schema.string?(payload[:request_id])
-          return failure('unsupported_command') unless %w[ticket submit result].include?(request[:command])
-
-          id = payload[:request_id]
-          entry = @entries[id]
-          return entry ? receipt(entry) : failure('unknown_request') if request[:command] == 'result'
-          return failure('grant_closed') if @closed
-
-          if request[:command] == 'ticket'
-            reserve(id, payload, entry)
-          else
-            submit(entry, payload[:ticket])
-          end
-        end
+        raise ArgumentError, 'load Lich coordinated operations first'
       end
 
-      def reserve(id, payload, entry)
-        operation, hold_id = payload.values_at(:operation, :hold_id)
-        unless (operation == 'hold' && hold_id.nil?) || (operation == 'release' && @schema.string?(hold_id))
-          return failure('unsupported_operation')
-        end
-        if entry
-          return failure('request_conflict') unless entry[:operation] == operation && entry[:hold_id] == hold_id
-
-          return ticket(entry)
-        end
-        return failure('grant_capacity') if @entries.size >= CAPACITY
-
-        entry = { request_id: id.dup.freeze, operation: operation.dup.freeze, hold_id: hold_id&.dup&.freeze,
-                  ticket: SecureRandom.hex(16), deadline: @clock.call + TICKET_SECONDS,
-                  state: 'reserved', cleanup: 'not_required', owner_tick: nil, engine_state: nil }
-        @entries[entry[:request_id]] = entry
-        ticket(entry)
-      end
-
-      def ticket(entry)
-        expire(entry)
-        { ok: true, payload: copy(request_id: entry[:request_id], ticket: entry[:ticket],
-                                  remaining_seconds: [entry[:deadline] - @clock.call, 0.0].max,
-                                  state: entry[:state]) }
-      end
-
-      def submit(entry, token)
-        return failure('invalid_ticket') unless entry && @schema.string?(token) && token == entry[:ticket]
-
-        expire(entry)
-        entry[:state] = 'pending' if entry[:state] == 'reserved'
-        receipt(entry)
-      end
-
-      def expire(entry)
-        return unless %w[reserved pending].include?(entry[:state]) && @clock.call >= entry[:deadline]
-
-        entry[:state], entry[:reason] = 'expired', 'ticket_expired'
-      end
-
-      def receipt(entry)
-        expire(entry)
-        value = entry.reject { |key, _| %i[ticket deadline lease_deadline observed_at].include?(key) }
-        value[:owner_age] = entry[:observed_at] && [@clock.call - entry[:observed_at], 0.0].max
-        { ok: true, payload: copy(value) }
-      end
-
+      # The start callback only rechecks local policy and applies work already
+      # admitted on a completed owner tick. It never reads the transport.
       def owner_tick(world)
         assert_owner!
-        return unless @started
+        return unless @started && !@closed
 
-        advance(world)
-      end
-
-      def advance(world)
-        safe = @session.identity == @identity && world.room.id == @safe_room &&
-               world.room.live_creatures.empty? && world.me.dead? == false &&
-               world.me.in_rt? == false && world.me.in_cast_rt? == false && @eligible.call(world) == true
-        @mutex.synchronize do
-          if @closed || @engine.stopping? || !safe
-            fail_closed('authority_or_safety_lost')
-          elsif @active && @clock.call >= @active[:lease_deadline]
-            fail_closed('hold_lease_expired')
-          else
-            @entries.each_value { |entry| expire(entry) }
-            entry = @entries.values.find { |item| item[:state] == 'pending' }
-            apply(entry) if entry
-          end
+        safe = begin
+          safe?(world)
+        rescue StandardError
+          fail_closed('owner_check_failed')
+          return
         end
-      rescue StandardError
-        @mutex.synchronize { fail_closed('owner_check_failed') }
+        unless safe
+          fail_closed('authority_or_safety_lost')
+          return
+        end
+        if revoked? || @engine.stopping?
+          fail_closed('authority_or_safety_lost')
+        elsif lease_expired?
+          fail_closed('hold_lease_expired')
+        elsif @pending
+          apply(@pending)
+        end
       end
 
-      def apply(entry)
-        if entry[:operation] == 'hold'
-          return deny(entry, 'already_held') if @active
+      def safe?(world)
+        @session.identity == @identity && world.room.id == @safe_room &&
+          world.room.live_creatures.empty? && world.me.dead? == false &&
+          world.me.in_rt? == false && world.me.in_cast_rt? == false && @eligible.call(world) == true
+      end
 
-          @engine.pause!(owner: @hold_owner)
-          @active = entry
-          entry[:lease_deadline] = @clock.call + HOLD_SECONDS
-          entry[:cleanup] = 'pending'
+      def apply(request)
+        @pending = nil
+        @applying = request.dup
+        if request[:operation] == 'hold'
+          if @active
+            @applying[:denied_reason] = 'already_held'
+          else
+            @engine.pause!(owner: @hold_owner)
+            @applying[:lease_deadline] = @clock.call + HOLD_SECONDS
+          end
+        elsif !@active || @active[:request_id] != request[:arguments]['hold_id']
+          @applying[:denied_reason] = 'hold_mismatch'
         else
-          return deny(entry, 'hold_mismatch') unless @active && @active[:request_id] == entry[:hold_id]
-          # Do not collapse a hold and release into one unobserved owner turn.
-          return deny(entry, 'hold_not_confirmed') unless @active[:state] == 'applied'
-
           @engine.resume!(owner: @hold_owner)
         end
-        entry[:state] = 'applying'
       end
 
+      # Completed callbacks first settle any action applied this turn, then take
+      # at most one new native request for the following owner turn.
       def confirm(tick, state)
         assert_owner!
-        @mutex.synchronize do
-          @tick = tick
-          return if @closed
-          if @active && @clock.call >= @active[:lease_deadline]
-            fail_closed('hold_lease_expired')
-            return
-          end
-          @entries.each_value do |entry|
-            next unless entry[:state] == 'applying'
+        @tick = tick
+        return unless @started && !@closed
 
-            entry[:state], entry[:owner_tick], entry[:engine_state] = 'applied', tick, state[:state].to_s
-            entry[:observed_at] = @clock.call
-            next unless entry[:operation] == 'release'
+        if lease_expired?
+          fail_closed('hold_lease_expired')
+          return
+        end
+        settle_applied(tick, state) if @applying
+        return if @closed || @pending || @applying
 
-            @active[:cleanup] = 'complete'
-            @active[:released_by] = entry[:request_id]
-            @active[:cleanup_owner_tick] = tick
-            @active = nil
-          end
+        @pending = @grant.next_request(owner_tick: tick)
+      end
+
+      def settle_applied(tick, state)
+        request = @applying
+        @applying = nil
+        if request[:denied_reason]
+          @grant.settle(request_id: request[:request_id], owner_tick: tick, outcome: :failed,
+                        reason: request[:denied_reason], cleanup: :complete)
+        elsif request[:operation] == 'hold'
+          @grant.settle(request_id: request[:request_id], owner_tick: tick, outcome: :succeeded,
+                        result: { engine_state: state[:state].to_s }, cleanup: :pending)
+          @active = { request_id: request[:request_id], lease_deadline: request[:lease_deadline] }
+        else
+          @grant.settle(request_id: request[:request_id], owner_tick: tick, outcome: :succeeded,
+                        result: { engine_state: state[:state].to_s }, cleanup: :complete)
+          @grant.finish_cleanup(request_id: @active[:request_id], owner_tick: tick)
+          @active = nil
         end
       end
 
+      def lease_expired?
+        held = @active || (@applying if @applying && @applying[:operation] == 'hold')
+        held && @clock.call >= held[:lease_deadline]
+      end
+
+      def revoked?
+        @revocation_mutex.synchronize { @revoked }
+      end
+
+      # This method runs only on the owner thread. It closes admission, stops
+      # local work, releases only this adapter's hold, and truthfully resolves
+      # every request already taken from the native mailbox.
       def fail_closed(reason)
-        @closed = true
+        @grant.revoke(reason)
         @engine.stop!(reason.to_sym)
         @engine.resume!(owner: @hold_owner)
-        @entries.each_value do |entry|
-          if %w[reserved pending applying].include?(entry[:state])
-            entry[:state], entry[:reason] = 'failed', reason
-          end
-          if entry[:cleanup] == 'pending'
-            entry[:cleanup] = 'complete'
-            entry[:cleanup_reason] = reason
-          end
-        end
+        settle_interrupted(@pending, reason, performed: false)
+        @pending = nil
+        settle_interrupted(@applying, reason, performed: @applying && !@applying[:denied_reason])
+        @applying = nil
+        finish_active_cleanup
         @active = nil
+        @closed = true
       end
 
-      def deny(entry, reason)
-        entry[:state], entry[:reason] = 'failed', reason
+      def settle_interrupted(request, reason, performed:)
+        return unless request
+
+        @grant.settle(request_id: request[:request_id], owner_tick: [@tick, request[:owner_tick]].compact.max,
+                      outcome: performed ? :unknown : :failed, reason: reason, cleanup: :complete)
+      end
+
+      def finish_active_cleanup
+        return unless @active
+
+        @grant.finish_cleanup(request_id: @active[:request_id], owner_tick: [@tick, 1].max)
       end
 
       def assert_owner!
-        raise ThreadError, 'hold pilot must run on its engine owner thread' unless Thread.current == @thread
+        raise ThreadError, 'hold adapter must run on its engine owner thread' unless Thread.current == @thread
       end
-
-      def copy(value) = @schema.immutable(value)
-      def failure(reason) = { ok: false, error: reason }
     end
   end
 end

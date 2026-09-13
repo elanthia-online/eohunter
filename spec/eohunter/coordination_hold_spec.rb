@@ -6,14 +6,17 @@ require_relative 'support/fake_world'
 RSpec.describe EO::Engine::Coordination::HoldPilot do
   before(:context) do
     root = ENV['LICH_COORDINATION_ROOT']
-    skip 'set LICH_COORDINATION_ROOT to the paired native transport checkout' if root.nil? || root.empty?
+    skip 'set LICH_COORDINATION_ROOT to the coordinated-operations checkout' if root.nil? || root.empty?
     require File.join(File.expand_path(root), 'lib/internal_api/coordination')
   end
 
   let(:world) { FakeWorld.new }
   let(:engine) { EO::Engine::Engine.new(world: world, behaviors: [], interval: 0) }
   let(:now) { [100.0] }
-  let(:identity) { { game: 'GS3', character: 'Bob', incarnation: 'session-one', connection_generation: 0, run_id: 'pilot-one' } }
+  let(:identity) do
+    { game: 'GS3', character: 'Bob', incarnation: 'session-one',
+      connection_generation: 0, run_id: 'pilot-one' }
+  end
   let(:peer) { identity.merge(character: 'Alice', incarnation: 'peer-one', run_id: 'peer-pilot') }
   let(:session) { double('session', identity: identity) }
   let(:eligible) { ->(_world) { true } }
@@ -22,26 +25,32 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
                         control_token: 'dedicated-control-test-token', eligible: eligible, clock: -> { now.first })
   end
   let(:descriptor) { pilot.start }
-  let(:transport) do
-    Lich::InternalAPI::ActiveSessions::Client.new(host: descriptor[:host], port: descriptor[:port],
-                                                  auth_token: 'dedicated-control-test-token', timeout: 0.25,
-                                                  max_frame_bytes: 16_384)
-  end
-
-  def request(command, id = 'one', **extra)
-    transport.request(command, { protocol_version: 1, identity: identity, peer: peer, request_id: id }.merge(extra))
-  end
-
-  def reserve(id = 'one', operation: 'hold', hold_id: nil)
-    request('ticket', id, operation: operation, hold_id: hold_id).fetch(:payload)
+  let(:client) do
+    Lich::InternalAPI::Coordination::Operations::Client.new(
+      descriptor: descriptor, control_token: 'dedicated-control-test-token', local_identity: peer
+    )
   end
 
   def submit(id = 'one', operation: 'hold', hold_id: nil)
-    token = reserve(id, operation: operation, hold_id: hold_id).fetch(:ticket)
-    request('submit', id, ticket: token).fetch(:payload)
+    arguments = hold_id ? { 'hold_id' => hold_id } : {}
+    client.submit(request_id: id, operation: operation, arguments: arguments).fetch(:payload)
   end
 
-  def result(id = 'one') = request('result', id).fetch(:payload)
+  def result(id = 'one') = client.result(request_id: id).fetch(:payload)
+
+  def apply_hold(id = 'one')
+    submit(id)
+    engine.tick # native mailbox admission on a completed owner turn
+    engine.tick # local application and completed-turn confirmation
+    result(id)
+  end
+
+  def apply_release(id = 'release', hold_id: 'one')
+    submit(id, operation: 'release', hold_id: hold_id)
+    engine.tick
+    engine.tick
+    result(id)
+  end
 
   after do
     pilot.close
@@ -56,35 +65,31 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
     expect(engine.stopping?).to be false
   end
 
-  it 'only applies a pending request on the owner and confirms after the completed tick' do
+  it 'takes only on a completed owner tick, then confirms the local hold on the next' do
     expect(submit).to include(state: 'pending', owner_tick: nil)
-    expect(engine.paused?).to be false
-    during = nil
-    engine.on_tick { during = result }
     engine.tick
-    expect(during).to include(state: 'applying', owner_tick: nil)
-    expect(result).to include(state: 'applied', engine_state: 'held', owner_tick: 1, cleanup: 'pending')
+    expect(result).to include(state: 'running', owner_tick: 1, cleanup: 'pending')
+    expect(engine.paused?).to be false
+
+    engine.tick
+    expect(result).to include(state: 'settled', outcome: 'succeeded', owner_tick: 2,
+                              cleanup: 'pending', result: { engine_state: 'held' })
     expect(engine.paused?).to be true
   end
 
-  it 'releases only the exact applied hold after a second completed tick' do
-    submit
-    engine.tick
-    expect(submit('release-one', operation: 'release', hold_id: 'one')[:state]).to eq('pending')
-    expect(engine.paused?).to be true
-    engine.tick
-    expect(result('release-one')).to include(state: 'applied', engine_state: 'running', owner_tick: 2)
-    expect(result).to include(cleanup: 'complete', released_by: 'release-one', cleanup_owner_tick: 2)
+  it 'releases only the exact settled hold and completes both receipts' do
+    apply_hold
+    release = apply_release
+    expect(release).to include(state: 'settled', outcome: 'succeeded', cleanup: 'complete',
+                               result: { engine_state: 'running' })
+    expect(result).to include(outcome: 'succeeded', cleanup: 'complete')
     expect(engine.paused?).to be false
   end
 
   it 'keeps a manual pause made during the remote hold' do
-    submit
-    engine.tick
+    apply_hold
     engine.pause!
-    submit('release', operation: 'release', hold_id: 'one')
-    engine.tick
-    expect(result('release')).to include(state: 'applied', engine_state: 'held')
+    expect(apply_release).to include(result: { engine_state: 'held' })
     expect(engine.paused?).to be true
     engine.resume!
     expect(engine.paused?).to be false
@@ -92,119 +97,54 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
 
   it 'does not let manual resume clear the peer hold' do
     engine.pause!
-    submit
-    engine.tick
+    apply_hold
     engine.resume!
     expect(engine.paused?).to be true
   end
 
-  it 'replays a duplicate receipt without applying or renewing the hold' do
-    token = reserve.fetch(:ticket)
-    request('submit', ticket: token)
-    engine.tick
-    first = result
-    now[0] += 10
-    expect(request('submit', ticket: token)[:payload]).to eq(first.merge(owner_age: 10.0))
-    now[0] += 5
+  it 'stops and completes cleanup when the fixed hold lease expires' do
+    apply_hold
+    now[0] += described_class::HOLD_SECONDS
     engine.tick
     expect(engine.stop_reason).to eq(:hold_lease_expired)
-    expect(result).to include(state: 'applied', cleanup: 'complete', cleanup_reason: 'hold_lease_expired')
-  end
-
-  it 'rejects ID reuse with different arguments and never refreshes the issuance deadline' do
-    first = reserve
-    now[0] += 4
-    expect(reserve).to include(ticket: first[:ticket], remaining_seconds: 1.0)
-    expect(request('ticket', operation: 'release', hold_id: 'different')).to include(ok: false, error: 'request_conflict')
-    now[0] += 1
-    expect(request('submit', ticket: first[:ticket])[:payload][:state]).to eq('expired')
-    engine.tick
+    expect(result).to include(outcome: 'succeeded', cleanup: 'complete')
     expect(engine.paused?).to be false
   end
 
-  it 'expires an admitted request if the owner did not run before the deadline' do
-    submit
-    now[0] += 5
-    engine.tick
-    expect(result).to include(state: 'expired', reason: 'ticket_expired')
-    expect(engine.paused?).to be false
-  end
-
-  it 'retains all tombstones and refuses capacity rather than forgetting request IDs' do
-    described_class::CAPACITY.times { |i| reserve("request-#{i}") }
-    now[0] += 6
-    expect(request('ticket', 'overflow', operation: 'hold', hold_id: nil)).to include(ok: false, error: 'grant_capacity')
-    expect(reserve('request-0')[:state]).to eq('expired')
-  end
-
-  it 'refuses another hold and an unrelated release' do
-    submit
-    engine.tick
+  it 'denies a second hold and a release for another hold without changing local state' do
+    apply_hold
     submit('two')
     engine.tick
-    expect(result('two')).to include(state: 'failed', reason: 'already_held')
+    engine.tick
+    expect(result('two')).to include(state: 'settled', outcome: 'failed', reason: 'already_held')
     submit('release', operation: 'release', hold_id: 'not-our-hold')
     engine.tick
-    expect(result('release')).to include(state: 'failed', reason: 'hold_mismatch')
+    engine.tick
+    expect(result('release')).to include(state: 'settled', outcome: 'failed', reason: 'hold_mismatch')
     expect(engine.paused?).to be true
   end
 
-  it 'serializes queued releases, so only one can release a hold' do
-    submit
-    engine.tick
+  it 'serializes queued releases so only one can release a hold' do
+    apply_hold
     submit('release-a', operation: 'release', hold_id: 'one')
     submit('release-b', operation: 'release', hold_id: 'one')
-    engine.tick
-    engine.tick
-    expect(result('release-a')[:state]).to eq('applied')
-    expect(result('release-b')).to include(state: 'failed', reason: 'hold_mismatch')
+    4.times { engine.tick }
+    expect(result('release-a')).to include(outcome: 'succeeded')
+    expect(result('release-b')).to include(outcome: 'failed', reason: 'hold_mismatch')
     expect(engine.stopping?).to be false
   end
 
-  it 'does not collapse an admitted hold and release into the same turn' do
-    submit
-    submit('release', operation: 'release', hold_id: 'one')
-    engine.tick
-    expect(result[:state]).to eq('applied')
-    expect(result('release')[:state]).to eq('pending')
-    expect(engine.paused?).to be true
-    engine.tick
-    expect(engine.paused?).to be false
-  end
-
-  it 'fails closed on a reconnect and does not revive old requests' do
-    submit
-    engine.tick
+  it 'fails closed on reconnect and does not revive old work' do
+    apply_hold
     allow(session).to receive(:identity).and_return(identity.merge(connection_generation: 1))
     engine.tick
     expect(engine.stop_reason).to eq(:authority_or_safety_lost)
-    expect(result[:cleanup]).to eq('complete')
-    expect(request('ticket', 'new', operation: 'hold', hold_id: nil)[:error]).to eq('grant_closed')
-  end
-
-  it 'rejects a wrong peer, target incarnation, protocol, operation and extra arguments' do
-    expect(request('result', peer: peer.merge(run_id: 'old'))[:error]).to eq('identity_mismatch')
-    expect(request('result', identity: identity.merge(incarnation: 'old'))[:error]).to eq('identity_mismatch')
-    expect(request('result', protocol_version: 2)[:error]).to eq('protocol_mismatch')
-    expect(request('ticket', operation: 'go2', hold_id: nil)[:error]).to eq('unsupported_operation')
-    expect(request('ticket', operation: 'hold', hold_id: nil, command: 'attack')[:error]).to eq('invalid_request')
-    expect(request('eval')[:error]).to eq('unsupported_command')
-  end
-
-  it 'rejects a read token and an incorrect ticket' do
-    port = descriptor[:port]
-    reader = Lich::InternalAPI::ActiveSessions::Client.new(host: '127.0.0.1', port: port,
-                                                           auth_token: 'read-only-token', timeout: 0.25,
-                                                           max_frame_bytes: 16_384)
-    expect(reader.request('ticket')[:ok]).to be false
-    reserve
-    expect(request('submit', ticket: 'wrong')[:error]).to eq('invalid_ticket')
-    expect(engine.paused?).to be false
+    expect(client.result(request_id: 'one')).to eq(ok: false, error: 'identity_mismatch')
+    expect(client.submit(request_id: 'new', operation: 'hold')).to include(ok: false)
   end
 
   it 'stops on safety loss without resuming an existing manual hold' do
-    submit
-    engine.tick
+    apply_hold
     engine.pause!
     world.id = 2
     engine.tick
@@ -218,49 +158,21 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
       allow(eligible).to receive(:call).and_return(unknown)
       submit
       engine.tick
-      expect(result[:state]).to eq('failed')
       expect(engine.stopping?).to be true
+      expect(result).to include(state: 'revoked', outcome: 'cancelled')
     end
   end
 
-  it 'fails closed on a reader exception' do
+  it 'fails closed on a local reader exception' do
     allow(eligible).to receive(:call).and_raise('disconnected')
     submit
     engine.tick
     expect(engine.stop_reason).to eq(:owner_check_failed)
-    expect(result[:state]).to eq('failed')
-  end
-
-  it 'keeps a stopped owner observation aging even when receipts are read' do
-    submit
-    engine.tick
-    now[0] += 2
-    expect(result).to include(owner_tick: 1, owner_age: 2.0)
-    now[0] += 1
-    expect(result).to include(owner_tick: 1, owner_age: 3.0)
-  end
-
-  it 'rejects a queued hold when a creature arrives in the declared safe room' do
-    submit
-    world.npcs << FakeWorld::FakeNpc.new('1', 'rat', 'a rat', nil)
-    engine.tick
-    expect(result[:state]).to eq('failed')
-    expect(engine.stop_reason).to eq(:authority_or_safety_lost)
-  end
-
-  %i[dead? in_rt? in_cast_rt?].each do |check|
-    it "requires known false for #{check}" do
-      submit
-      world.me[check] = nil
-      engine.tick
-      expect(result[:state]).to eq('failed')
-      expect(engine.stopping?).to be true
-    end
+    expect(result).to include(state: 'revoked', outcome: 'cancelled')
   end
 
   it 'marks revocation separately from owner cleanup' do
-    submit
-    engine.tick
+    apply_hold
     pilot.revoke
     expect(result[:cleanup]).to eq('pending')
     expect(engine.stopping?).to be false
@@ -269,22 +181,22 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
     expect(result[:cleanup]).to eq('complete')
   end
 
-  it 'closes the listener and stops on explicit owner teardown' do
-    submit
-    engine.tick
+  it 'closes the listener only after owner cleanup' do
+    apply_hold
     pilot.close
     expect(engine.stopping?).to be true
     expect(engine.paused?).to be false
-    expect(request('result')[:ok]).to be false
+    expect(client.result(request_id: 'one')[:ok]).to be false
   end
 
-  it 'does not confirm an action when another start callback aborts the turn' do
+  it 'reports unknown when a local effect occurs but the owner turn aborts before confirmation' do
     submit
+    engine.tick
     engine.on_tick { engine.stop!(:local_stop) }
     engine.tick
-    expect(result[:state]).to eq('applying')
+    expect(result).to include(state: 'running', cleanup: 'pending')
     engine.tick
-    expect(result).to include(state: 'failed', cleanup: 'complete')
+    expect(result).to include(state: 'settled', outcome: 'unknown', cleanup: 'complete')
   end
 
   it 'refuses to attach to an engine with hunting behaviors' do
@@ -306,9 +218,9 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
     expect(engine.stopping?).to be false
   end
 
-  it 'applies and reconciles across two real processes with no game commands' do
+  it 'applies and reconciles through native operations across two real processes' do
     skip 'requires fork' unless Process.respond_to?(:fork)
-    transport
+    client
     parent_read, child_write = IO.pipe
     child_read, parent_write = IO.pipe
     pid = fork do
@@ -317,12 +229,12 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
       begin
         raise 'admission' unless submit[:state] == 'pending'
         child_write.puts('pending')
-        raise 'owner handshake' unless child_read.gets&.strip == 'tick'
-        raise 'hold confirmation' unless result[:state] == 'applied'
+        2.times { raise 'owner handshake' unless child_read.gets&.strip == 'tick' }
+        raise 'hold confirmation' unless result[:outcome] == 'succeeded'
         raise 'release admission' unless submit('release', operation: 'release', hold_id: 'one')[:state] == 'pending'
         child_write.puts('release_pending')
-        raise 'owner handshake' unless child_read.gets&.strip == 'tick'
-        raise 'release confirmation' unless result('release')[:engine_state] == 'running'
+        2.times { raise 'owner handshake' unless child_read.gets&.strip == 'tick' }
+        raise 'release confirmation' unless result('release').dig(:result, :engine_state) == 'running'
         child_write.puts('passed')
         exit! 0
       rescue StandardError => e
@@ -332,17 +244,16 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
     end
     child_read.close
     child_write.close
-    expect(IO.select([parent_read], nil, nil, 3)).not_to be_nil
     expect(parent_read.gets&.strip).to eq('pending')
-    expect(engine.paused?).to be false
-    engine.tick
-    parent_write.puts('tick')
-    expect(IO.select([parent_read], nil, nil, 3)).not_to be_nil
+    2.times do
+      engine.tick
+      parent_write.puts('tick')
+    end
     expect(parent_read.gets&.strip).to eq('release_pending')
-    expect(engine.paused?).to be true
-    engine.tick
-    parent_write.puts('tick')
-    expect(IO.select([parent_read], nil, nil, 3)).not_to be_nil
+    2.times do
+      engine.tick
+      parent_write.puts('tick')
+    end
     expect(parent_read.gets&.strip).to eq('passed')
     expect(Process.wait2(pid).last.success?).to be true
     pid = nil

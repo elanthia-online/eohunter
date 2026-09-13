@@ -1,17 +1,20 @@
 # Coordination hold/release pilot
 
-Status: draft pilot; offline coverage and bounded two-character live smoke pass.
+Status: draft Adapter; predecessor live smoke passed, native-operations rewrite
+has offline coverage and still requires its own safe-room live smoke.
 Normal Hunter installation and profiles are unchanged.
-Scope approved 2026-09-13 after the read-only two-character smoke.
+Updated 2026-09-14 after the generic coordinated-operations Interface was built.
 
 This is an EOHunter-only follow-up to [#110](https://github.com/elanthia-online/eohunter/pull/110).
 It shares that proposal's small completed-tick hook, but does not include or
-require its read-only adapter. Whichever lands second should reconcile the
-shared hook rather than duplicate it. It requires the bounded native transport
-and identity schema in [lich-5 #1613](https://github.com/elanthia-online/lich-5/pull/1613),
-without adding write operations to the read-only Session. This is not a general
-Lich coordination interface yet. Do not merge until the native dependency is
-available in the supported test package and maintainers approve this scope.
+require its read-only Adapter. Whichever lands second should reconcile the
+shared hook rather than duplicate it. It requires the generic coordinated-
+operations Module stacked after
+[lich-5 #1613](https://github.com/elanthia-online/lich-5/pull/1613).
+Lich now owns the bounded transport, pair identity, tickets, replay protection,
+capacity and receipt Interface. EOHunter owns only safe-room eligibility and the
+local pause/resume policy. Do not merge until that native dependency is reviewed
+and available in the supported test package.
 
 ## Smallest useful test
 
@@ -38,33 +41,36 @@ integration needs a separate policy review, not removal of this check as setup.
   the read endpoint; only this control token authenticates requests here.
 - Full target and peer identities accompany every request. Same-host/same-user
   credentials prevent accidental use, not hostile same-user impersonation.
-- `ticket` reserves a request ID and its immutable operation arguments. The
+- Lich's `ticket` operation reserves a request ID and its immutable arguments. The
   receiver returns a random ticket valid for five receiver-local seconds.
   Retrying issuance returns the same ticket and never extends its lifetime.
 - `submit` presents that ticket. Only `hold` and `release` exist; a release names
   the exact hold request ID. Admission returns `pending`, not successful action.
-- `result` reconciles by request ID. An applied receipt is published only after
-  the owner completes a tick. It records that tick and the effective engine
-  state, not an assertion of current game readiness or observed game action.
+- `result` reconciles by request ID. The native receipt stays `running` until a
+  later owner tick has applied and observed the local policy result, then becomes
+  `settled` with a separate outcome and cleanup state. It records the exact owner
+  and peer generations, owner tick, and effective engine state; it is not an
+  assertion of current game readiness or observed game action.
 - `hold` has a fixed 15-second lease from owner application. A second hold is
   refused until the first is released. No renewal operation in this pilot.
 - Expired tickets cannot first execute. Late duplicates can read their existing
   result but cannot execute again. Conflicting reuse of an ID is refused.
-- Keep at most 32 request reservations for the entire pilot run. Never evict a
-  receipt and accidentally make an old ID executable again. At capacity start a
-  new explicitly granted pilot, with a new run identity and token.
+- The native Module keeps a bounded receipt table and never evicts replay
+  protection during a grant. At capacity start a new explicitly granted Adapter,
+  with a new run identity and token.
 
 The receiver-issued ticket bounds issuance-to-use, NOT the age of a human's
 original intent. Authentication does not supply freshness or idempotency.
 
 ## Owner and failure rules
 
-The native socket worker only validates and updates bounded receipt state. The
-engine's existing `on_tick` callback checks the current session identity and
-local safe-room eligibility, then drains admitted requests. Its
-`on_tick_completed` callback confirms the resulting engine state. No second
-Script supervisor or child registry is created: the bounded request/receipt
-table is coordination bookkeeping only.
+The native socket worker only validates and updates bounded receipt state. After
+an EOHunter owner turn completes, `on_tick_completed` takes at most one native
+request. The following `on_tick` checks current session identity and local safe-
+room eligibility before applying it, and the next completed callback settles the
+native receipt. This deliberately costs an owner turn so neither admission nor
+an interrupted effect is reported as success. No second Script supervisor,
+child registry, socket protocol, or EOHunter receipt store is created.
 
 Safe eligibility must explicitly be true on every tick; exceptions, nil,
 leaving the declared room, death, or a reconnect fail closed. The caller must
@@ -101,37 +107,38 @@ not make shared movement readiness coherent or enable group travel.
 
 ## Reproducing the offline contract
 
-Point `LICH_COORDINATION_ROOT` at a checkout of lich-5 #1613 (tested commit
-`c5da7b5f3d26ba6dd0df63186b3161ef50a2129a`), then run:
+Point `LICH_COORDINATION_ROOT` at a checkout containing the coordinated-
+operations Module stacked after lich-5 #1613 (tested commit
+`f44271a7`), and `LICH_EXECUTION_GUARD_ROOT` at lich-5 #1575, then run:
 
 ```sh
-LICH_COORDINATION_ROOT=/path/to/lich-5 bundle exec rspec
+LICH_COORDINATION_ROOT=/path/to/lich-5 \
+LICH_EXECUTION_GUARD_ROOT=/path/to/lich-5-guard bundle exec rspec
 bundle exec rubocop
 bundle exec rake build
 bundle exec rake doc
 ```
 
-Without that variable the native integration examples are explicitly pending.
-The dedicated coordination workflow pins the above commit and runs all 33
-focused cases, including a forked peer over the actual native loopback endpoint.
+Without those variables their native integration examples are explicitly
+pending. The focused Adapter suite includes a forked peer over the actual native
+loopback endpoint.
 Default Hunter startup does not require or enable the optional Lich prototype.
 
 ## Test evidence (2026-09-13)
 
-- Original integrated branch (including #110): 897 examples, zero failures
-  (seed 62039). The exact publication branch omits #110's independent adapter
-  tests: 874 examples, zero failures with the pinned native dependency (seed 719).
-- 33 focused cases cover ownership, the protocol and failure handling, including
-  an actual forked peer talking to the native bounded endpoint.
-- Rubocop: all 83 Ruby files, no offenses. YARD: 100% documented.
-- Single-file build and Ruby compilation pass.
+- Native-operations Adapter: 950 examples, zero failures with both native Lich
+  dependencies enabled (seed 719); 19 focused policy cases include an actual
+  forked peer talking over the native bounded endpoint.
+- The refactor removes EOHunter's duplicate transport, ticket, replay and receipt
+  Implementation: 215 inserted lines against 350 removed across code and specs.
+- Scoped Rubocop reports no offenses. Single-file build and Ruby compilation pass.
 - The exact private live-smoke script also runs in two independent Ruby
   processes against fake Worlds. All nine checks pass, with no game commands
   and private credential files removed. This rehearsal caught an unknown-receipt
   `false`/`nil` mistake in the diagnostic before deployment.
-- Receipt `owner_age` increases without owner progress; reading it cannot
-  refresh the recorded application time. Unknown death/RT values or a creature
-  arriving in the declared room fail closed.
+- Unknown death/RT values or a creature arriving in the declared room fail
+  closed. An effect interrupted before its confirming owner turn is reported as
+  `unknown`, never successful.
 
 The user explicitly launched the private diagnostic on Calvix and Skooshii in
 safe room 324. All nine live checks passed at 10:32:51 +07, and both scripts
@@ -148,7 +155,9 @@ That was corrected to allow nil checkpoints while still denying command strings;
 three tests against the actual native guard and the repeated two-process
 rehearsal passed before the successful live retry. No Lich guard change was made.
 
-The private character-specific launcher and raw game logs are not distributed
-with this PR. The portable protocol spec is checked in. Live checks covered
+The private character-specific launcher and raw game logs are not distributed.
+The predecessor live checks covered
 identity, hold/release, duplicate delivery, preserving a local manual pause,
-and teardown; expiry/reconnect/failure cases were tested offline, not in game.
+and teardown; expiry/reconnect/failure cases were tested offline. Because this
+revision replaces that transport Implementation with Lich's generic Interface,
+it still needs a short safe-room live smoke before merge.
