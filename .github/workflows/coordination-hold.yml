@@ -1,0 +1,30 @@
+name: coordination hold contract
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # Pin the exact reviewed native transport, not a moving branch. This is
+      # lich-5 #1613; update/remove the pin when its release dependency lands.
+      - uses: actions/checkout@v4
+        with:
+          repository: elanthia-online/lich-5
+          ref: c5da7b5f3d26ba6dd0df63186b3161ef50a2129a
+          path: .paired-lich
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - run: bundle exec rspec spec/eohunter/coordination_hold_spec.rb spec/eohunter/owned_pause_spec.rb
+        env:
+          LICH_COORDINATION_ROOT: ${{ github.workspace }}/.paired-lich
