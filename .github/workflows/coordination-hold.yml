@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: therealatari/lich-5
-          ref: a4182d82bc722cb2028263718e231426e5c2bd5d
+          ref: a4182d82545cb2297564822e1e4693a32643282b
           path: .paired-lich
           persist-credentials: false
       - uses: ruby/setup-ruby@v1
