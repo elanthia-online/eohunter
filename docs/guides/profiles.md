@@ -72,10 +72,11 @@ characters. `result` is required and must be loaded immediately before sending;
 EOHunter reads the current names through World on every attempt. Unknown
 preparation names in command lists refuse profile loading.
 
-Optional `match` selects a response by exact scalar payload values; optional
+Optional `match` selects a response by scalar payload values; optional
 `expect` checks success after selecting it. Both default to `{}`. Missing fields
-never equal null. Values retain their types (for example, `true` differs from
-`"true"`); string and symbol keys identify the same payload field. Nested mappings
+never equal null. Numbers compare by value (`6` equals `6.0`); all other values
+retain strict types (`"6"` differs from `6`, and `"true"` differs from `true`).
+String and symbol keys identify the same payload field. Nested mappings
 and arrays are not supported. With no `expect`, any correlated event confirms
 success. A correlated event failing `expect` returns `failed/denied`, preserving
 the event; silence or only unrelated events returns `timeout/no_confirmation`.

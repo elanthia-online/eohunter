@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'ostruct'
+require 'yaml'
 require_relative 'engine_helper'
 
 RSpec.describe EO::Engine::Preparations do
@@ -76,11 +77,23 @@ RSpec.describe EO::Engine::Preparations do
     end
   end
 
-  it 'matches exact scalar values and distinguishes missing keys from null' do
+  it 'distinguishes missing keys from null' do
     expect(described_class.matches?({}, { ok: nil })).to be(false)
     expect(described_class.matches?({ 'ok' => nil }, { ok: nil })).to be(true)
-    expect(described_class.matches?({ ok: 'true' }, { ok: true })).to be(false)
-    expect(described_class.matches?({ count: 1.0 }, { count: 1 })).to be(false)
+  end
+
+  [[6, 6.0], [6.0, 6]].each do |actual, expected|
+    it "matches equal numeric values across #{actual.class}/#{expected.class}" do
+      expect(described_class.matches?({ count: actual }, { count: expected })).to be(true)
+      expect(described_class.matches?({ 'count' => actual }, { count: expected })).to be(true)
+    end
+  end
+
+  [[6, 6.5], [6.5, 6], ['6', 6], [6, '6'], ['true', true],
+   [true, 'true'], [false, 0], [nil, false], [:ready, 'ready']].each do |actual, expected|
+    it "rejects mismatched scalar values #{actual.inspect} and #{expected.inspect}" do
+      expect(described_class.matches?({ value: actual }, { value: expected })).to be(false)
+    end
   end
 end
 
@@ -112,6 +125,21 @@ RSpec.describe EO::Engine::Actions::Prepare do
     result = action.call
     expect(result).to have_attributes(status: :failed, reason: :denied, acted: true)
     expect(result.event.data[:ok]).to be(false)
+  end
+
+  %w[match expect].each do |field|
+    [[6, 6.0], [6.0, 6]].each do |actual, expected|
+      it "confirms YAML #{field} numeric values across #{actual.class}/#{expected.class} without resending" do
+        definition[field] = YAML.safe_load("charges: #{expected}")
+        expect(action).to receive(:game_send).with('feed my crystal').once do
+          EO::Engine::Events.emit(:user_feed_result, item: 'crystal', ok: true, charges: actual)
+          'fed'
+        end
+        result = action.call
+        expect(result).to have_attributes(status: :success, reason: :prepared, acted: true)
+        expect(result.event.data[:charges]).to eql(actual)
+      end
+    end
   end
 
   it 'treats silence and unrelated replies as unconfirmed, not denial' do

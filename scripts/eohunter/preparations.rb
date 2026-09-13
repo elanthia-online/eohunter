@@ -50,16 +50,24 @@ module EO::Engine
     end
 
     # Compare scalar fields, including key presence; absent is not null.
+    # Numbers compare by value across numeric types; other scalars stay strict.
     # String and symbol payload keys name the same field, as in Lich events.
     # @param data [Hash] the event payload
-    # @param fields [Hash{Symbol => Object}] required exact scalar values
+    # @param fields [Hash{Symbol => Object}] required scalar values
     # @return [Boolean]
     def self.matches?(data, fields)
       return false unless data.is_a?(Hash)
 
       fields.all? do |key, value|
         actual = data.key?(key) ? key : key.to_s
-        data.key?(actual) && data[actual].eql?(value)
+        next false unless data.key?(actual)
+
+        observed = data[actual]
+        if observed.is_a?(Numeric) && value.is_a?(Numeric)
+          observed == value
+        else
+          observed.eql?(value)
+        end
       end
     end
 
