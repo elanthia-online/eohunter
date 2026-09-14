@@ -1,20 +1,20 @@
 # Coordination hold/release pilot
 
-Status: draft Adapter; predecessor live smoke passed, native-operations rewrite
+Status: draft Adapter; predecessor live smoke passed, coordination-library rewrite
 has offline coverage and still requires its own safe-room live smoke.
 Normal Hunter installation and profiles are unchanged.
-Updated 2026-09-14 after the generic coordinated-operations Interface was built.
+Updated 2026-09-14 after the generic coordination library was built.
 
 This is an EOHunter-only follow-up to [#110](https://github.com/elanthia-online/eohunter/pull/110).
 It shares that proposal's small completed-tick hook, but does not include or
 require its read-only Adapter. Whichever lands second should reconcile the
-shared hook rather than duplicate it. It requires the generic coordinated-
-operations Module stacked after
-[lich-5 #1613](https://github.com/elanthia-online/lich-5/pull/1613).
-Lich now owns the bounded transport, pair identity, tickets, replay protection,
-capacity and receipt Interface. EOHunter owns only safe-room eligibility and the
-local pause/resume policy. Do not merge until that native dependency is reviewed
-and available in the supported test package.
+shared hook rather than duplicate it. It requires the generic
+[`libeocoordination` library](https://github.com/elanthia-online/eohunter/pull/115).
+The library owns bounded transport, pair identity, tickets, replay protection,
+capacity and receipts. EOHunter owns only safe-room eligibility and the local
+pause/resume policy. Do not merge until that library dependency and its narrow
+[Lich hook-priority seam](https://github.com/elanthia-online/lich-5/pull/1621)
+are reviewed and available in the supported test package.
 
 ## Smallest useful test
 
@@ -41,12 +41,12 @@ integration needs a separate policy review, not removal of this check as setup.
   the read endpoint; only this control token authenticates requests here.
 - Full target and peer identities accompany every request. Same-host/same-user
   credentials prevent accidental use, not hostile same-user impersonation.
-- Lich's `ticket` operation reserves a request ID and its immutable arguments. The
+- The library's `ticket` operation reserves a request ID and its immutable arguments. The
   receiver returns a random ticket valid for five receiver-local seconds.
   Retrying issuance returns the same ticket and never extends its lifetime.
 - `submit` presents that ticket. Only `hold` and `release` exist; a release names
   the exact hold request ID. Admission returns `pending`, not successful action.
-- `result` reconciles by request ID. The native receipt stays `running` until a
+- `result` reconciles by request ID. The library receipt stays `running` until a
   later owner tick has applied and observed the local policy result, then becomes
   `settled` with a separate outcome and cleanup state. It records the exact owner
   and peer generations, owner tick, and effective engine state; it is not an
@@ -56,7 +56,7 @@ integration needs a separate policy review, not removal of this check as setup.
   operation in this pilot.
 - Expired tickets cannot first execute. Late duplicates can read their existing
   result but cannot execute again. Conflicting reuse of an ID is refused.
-- The native Module keeps a bounded receipt table and never evicts replay
+- The coordination library keeps a bounded receipt table and never evicts replay
   protection during a grant. At capacity start a new explicitly granted Adapter,
   with a new run identity and token.
 
@@ -73,11 +73,11 @@ of that contract and must not embed transport or allocation policy.
 
 ## Owner and failure rules
 
-The native socket worker only validates and updates bounded receipt state. After
-an EOHunter owner turn completes, `on_tick_completed` takes at most one native
+The library socket worker only validates and updates bounded receipt state. After
+an EOHunter owner turn completes, `on_tick_completed` takes at most one admitted
 request. The following `on_tick` checks current session identity and local safe-
 room eligibility before applying it, and the next completed callback settles the
-native receipt. This deliberately costs an owner turn so neither admission nor
+library receipt. This deliberately costs an owner turn so neither admission nor
 an interrupted effect is reported as success. No second Script supervisor,
 child registry, socket protocol, or EOHunter receipt store is created.
 
@@ -107,7 +107,7 @@ observation then, not a live status poll.
 4. Exact release target, wrong peer/token/run/generation, closed owner.
 5. Reconnect, safety loss, grant closure and hold expiry stop without auto-resume.
 6. A manual hold arriving during a peer hold survives peer release.
-7. Paired native socket test, then two independent processes with explicit tokens.
+7. Paired library socket test, then two independent processes with explicit tokens.
 8. Safe-room live smoke only after installing the tested build and verifying both
    characters and scripts. Keep private token files out of logs and repositories.
 
@@ -116,28 +116,27 @@ not make shared movement readiness coherent or enable group travel.
 
 ## Reproducing the offline contract
 
-Point `LICH_COORDINATION_ROOT` at a checkout containing the coordinated-
-operations Module stacked after lich-5 #1613 (tested commit
-`a4182d82`), and `LICH_EXECUTION_GUARD_ROOT` at lich-5 #1575, then run:
+Point `EO_COORDINATION_ROOT` at the `scripts` directory in an eohunter #115
+checkout, and `LICH_EXECUTION_GUARD_ROOT` at lich-5 #1575, then run:
 
 ```sh
-LICH_COORDINATION_ROOT=/path/to/lich-5 \
+EO_COORDINATION_ROOT=/path/to/eohunter/scripts \
 LICH_EXECUTION_GUARD_ROOT=/path/to/lich-5-guard bundle exec rspec
 bundle exec rubocop
 bundle exec rake build
 bundle exec rake doc
 ```
 
-Without those variables their native integration examples are explicitly
-pending. The focused Adapter suite includes a forked peer over the actual native
-loopback endpoint.
-Default Hunter startup does not require or enable the optional Lich prototype.
+Without those variables their integration examples are explicitly pending. The
+focused Adapter suite includes a forked peer over the actual library loopback
+endpoint. Default Hunter startup does not require or enable the optional
+coordination library.
 
 ## Test evidence (2026-09-13)
 
-- Native-operations Adapter: 950 examples, zero failures with both native Lich
-  dependencies enabled (seed 719); 19 focused policy cases include an actual
-  forked peer talking over the native bounded endpoint.
+- Coordination-library Adapter: 950 examples, zero failures in the predecessor
+  integrated run (seed 719); focused policy cases include an actual forked peer
+  talking over the bounded loopback endpoint.
 - The refactor removes EOHunter's duplicate transport, ticket, replay and receipt
   Implementation: 215 inserted lines against 350 removed across code and specs.
 - Scoped Rubocop reports no offenses. Single-file build and Ruby compilation pass.
@@ -168,5 +167,5 @@ The private character-specific launcher and raw game logs are not distributed.
 The predecessor live checks covered
 identity, hold/release, duplicate delivery, preserving a local manual pause,
 and teardown; expiry/reconnect/failure cases were tested offline. Because this
-revision replaces that transport Implementation with Lich's generic Interface,
+revision replaces that transport Implementation with the external library Interface,
 it still needs a short safe-room live smoke before merge.

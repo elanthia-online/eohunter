@@ -13,13 +13,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      # Pin the exact reviewed native transport, not a moving branch. This is
-      # lich-5 #1613; update/remove the pin when its release dependency lands.
+      # Pin the independently distributed library contract consumed by this
+      # branch; update/remove the pin when eohunter #115 lands.
       - uses: actions/checkout@v4
         with:
-          repository: therealatari/lich-5
-          ref: a4182d82545cb2297564822e1e4693a32643282b
-          path: .paired-lich
+          repository: therealatari/hunter
+          ref: 726afc81afb1eac163c8aec8c38eaa4d3e88d38e
+          path: .paired-coordination
           persist-credentials: false
       - uses: ruby/setup-ruby@v1
         with:
@@ -27,4 +27,4 @@ jobs:
           bundler-cache: true
       - run: bundle exec rspec spec/eohunter/coordination_hold_spec.rb spec/eohunter/owned_pause_spec.rb
         env:
-          LICH_COORDINATION_ROOT: ${{ github.workspace }}/.paired-lich
+          EO_COORDINATION_ROOT: ${{ github.workspace }}/.paired-coordination/scripts

@@ -67,7 +67,7 @@ module EO::Engine
       end
 
       # Close admission from any thread. The next owner tick performs EOHunter
-      # cleanup and reports it through the native receipt.
+      # cleanup and reports it through the library receipt.
       # @return [nil]
       def revoke
         @grant.revoke('adapter_revoked')
