@@ -94,6 +94,15 @@ module EO::Engine
       @hands ||= Hands.new(self)
     end
 
+    # Names currently supplied by Lich's reloadable message definitions.
+    # Read immediately before preparation sends so removed definitions fail closed.
+    # @return [Array<Symbol>]
+    def message_events = messages.events.map(&:to_sym)
+
+    # Source seam for named message definitions; specs replace it with a fake.
+    # @return [Module] Lich's Combat::Messages
+    def messages = ::Lich::Gemstone::Combat::Messages
+
     # The live CreatureInstance behind a room creature, or nil when Lich
     # has none (a bridged bandit, outside Lich). bigshot 5.16's
     # creature_backed? / npc.creature.
