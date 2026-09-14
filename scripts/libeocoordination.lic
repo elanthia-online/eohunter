@@ -29,6 +29,7 @@ begin
   $VERBOSE = nil
   load File.join(base, 'protocol.rb')
   load File.join(base, 'discovery.rb')
+  load File.join(base, 'parser_projection.rb')
 ensure
   $VERBOSE = verbose
 end

@@ -11,6 +11,7 @@ RSpec.describe 'libeocoordination' do
 
     expect(EO::Coordination::VERSION).to eq('0.1.0')
     expect(EO::Coordination.require_version('0.1.0')).to be(true)
+    expect(EO::Coordination::ParserProjection).to be_a(Class)
     expect(Thread.list - threads).to be_empty
   end
 end
