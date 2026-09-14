@@ -117,6 +117,12 @@ events: an incoming swing, an ally's attack, a disarm, a hive trap, an
 arriving ambusher, the endroll of our own attack. Behaviors and actions
 subscribe to what they need and unsubscribe when done.
 
+When Lich emits `definitions_reloaded`, Watch reads the current
+`Combat::Messages.events` and replaces its named message subscription.
+Added names become available immediately and removed names stop being
+forwarded; the reload payload is not an event-name registry. Uninstall
+removes the current handlers, including the reload listener.
+
 ## Travel
 
 A trip is go2 started with a room, supervised one tick at a time. One
