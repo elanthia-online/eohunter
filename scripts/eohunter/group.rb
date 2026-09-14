@@ -114,6 +114,61 @@ module EO::Engine
       end
     end
 
+    # Version fence over Lich's opt-in native parser publication. It does not
+    # decide policy: the caller runs its existing local predicate inside the
+    # cut. A parser dispatch beginning or completing during that predicate
+    # withdraws or replaces the publication and rejects the result.
+    class NativeCut
+      # Old observations do not prove that a live parser is advancing.
+      # @return [Float] maximum accepted socket-ingress age in seconds
+      MAX_AGE_SECONDS = 5.0
+
+      # @param reader [#call] returns Game.player_state
+      # @param monotonic [#call] monotonic seconds comparable to source received_at
+      # @param max_age [Numeric] oldest native cut accepted for local policy
+      def initialize(reader:, monotonic: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, max_age: MAX_AGE_SECONDS)
+        raise ArgumentError, 'native player-state reader required' unless reader.respond_to?(:call)
+
+        @reader = reader
+        @monotonic = monotonic
+        @max_age = max_age
+      end
+
+      # @param world [World] existing local room facade
+      # @yield existing EOHunter policy reads
+      # @return [Object, nil] block result only when one native cut enclosed it
+      def capture(world)
+        before = @reader.call
+        return nil unless valid?(before, world)
+
+        result = yield
+        after = @reader.call
+        return nil unless before.equal?(after) && valid?(after, world)
+
+        result
+      rescue StandardError
+        nil
+      end
+
+      private
+
+      def valid?(sample, world)
+        return false unless sample.is_a?(Hash) && sample[:source].is_a?(Hash) && sample[:fields].is_a?(Hash)
+
+        source = sample[:source]
+        room = sample.dig(:fields, :room, :value)
+        return false unless source[:connection_id].is_a?(String) && !source[:connection_id].empty?
+        return false unless source[:sequence].is_a?(Integer) && source[:sequence].positive?
+        return false unless source[:received_at].is_a?(Numeric) && source[:received_at].finite?
+        age = @monotonic.call - source[:received_at]
+        return false unless age >= 0 && age <= @max_age
+        return false unless room.is_a?(Hash) && room[:epoch] == world.room.count
+        return false if world.room.respond_to?(:uid) && !world.room.uid.nil? && room[:uid] != world.room.uid
+
+        true
+      end
+    end
+
     # The instruction itself, one per order: its type (one of ORDERS), the
     # hunt it belongs to, the room it was raised in, when, and a payload.
     #
@@ -719,15 +774,17 @@ module EO::Engine
       # @param clock [#now] the time source
       # @param strict_movement [Boolean] enable preparation episodes on a strict Hub
       # @param identity_reader [#call, nil] current complete native run/session identity
+      # @param native_reader [#call, nil] current immutable native parser publication
       # @param room_epoch [#call, nil] local native room counter; defaults to World#room.count
       # @param movement_idle [#call, nil] (World) -> true when cleanup/combat permits movement
       # @param monotonic [#call] local monotonic seconds for completed-owner freshness
       # @return [Leader] the leader view; strict readiness is false until movement_idle is bound
-      # @raise [ArgumentError] when strict mode lacks a strict Hub or identity reader
+      # @raise [ArgumentError] when strict mode lacks its Hub, identity or native reader
       def initialize(hub, name:, policy: Policy.new, clock: Time, strict_movement: false, identity_reader: nil,
-                     room_epoch: nil, movement_idle: nil, monotonic: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
-        if strict_movement && (!identity_reader.respond_to?(:call) || !hub.strict_movement?)
-          raise ArgumentError, 'strict leader requires strict hub and identity reader'
+                     room_epoch: nil, movement_idle: nil, native_reader: nil,
+                     monotonic: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+        if strict_movement && (!identity_reader.respond_to?(:call) || !native_reader.respond_to?(:call) || !hub.strict_movement?)
+          raise ArgumentError, 'strict leader requires strict hub, identity and native player-state readers'
         end
 
         @hub = hub
@@ -737,6 +794,7 @@ module EO::Engine
         @lost = []
         @strict_movement = strict_movement == true
         @identity_reader, @room_epoch_reader, @monotonic = identity_reader, room_epoch, monotonic
+        @native_cut = NativeCut.new(reader: native_reader, monotonic: monotonic) if strict_movement?
         @movement_idle = movement_idle
         @strict_identity = Group.protocol_copy(identity_reader.call) if strict_movement?
         @owner_completion = nil
@@ -767,8 +825,10 @@ module EO::Engine
         return unless strict_movement?
         return if @owner_completion && tick <= @owner_completion[:tick]
 
-        @owner_completion = { tick: tick, state: state[:state].to_s, room: world.room.id,
-                              epoch: movement_epoch(world), at: @monotonic.call }
+        @owner_completion = @native_cut.capture(world) do
+          { tick: tick, state: state[:state].to_s, room: world.room.id,
+            epoch: movement_epoch(world), at: @monotonic.call }
+        end
       end
 
       # @return [Boolean] true while the bound leader has an outstanding usable episode
@@ -791,9 +851,12 @@ module EO::Engine
       # @return [Boolean] true when this movement attempt owns the permission
       def consume_movement!(world)
         return movement_ready?(world) unless strict_movement?
-        return false unless strict_local_ready?(world)
 
-        @hub.movement_ready?(identity: current_identity, room: world.room.id, room_epoch: movement_epoch(world), consume: true)
+        @native_cut.capture(world) do
+          strict_local_ready_unfenced?(world) &&
+            @hub.movement_ready?(identity: current_identity, room: world.room.id,
+                                 room_epoch: movement_epoch(world), consume: true)
+        end == true
       end
 
       # @return [String, nil] the Hub's open hunt id
@@ -921,9 +984,11 @@ module EO::Engine
       # @return [Boolean] true when the barrier is down
       def movement_ready?(world)
         if strict_movement?
-          return false unless strict_local_ready?(world)
-
-          return @hub.movement_ready?(identity: current_identity, room: world.room.id, room_epoch: movement_epoch(world))
+          return @native_cut.capture(world) do
+            strict_local_ready_unfenced?(world) &&
+            @hub.movement_ready?(identity: current_identity, room: world.room.id,
+                                 room_epoch: movement_epoch(world))
+          end == true
         end
 
         all_present?(world) && !roundtime? && (online - @hub.acked(:prepare_move)).empty?
@@ -962,7 +1027,7 @@ module EO::Engine
       #
       # @param world [World] the owner's existing local observations
       # @return [Boolean] true only for a live, idle owner with its full roster present
-      def strict_local_ready?(world)
+      def strict_local_ready_unfenced?(world)
         completion = @owner_completion
         return false unless current_identity && completion && completion[:state] == 'running'
         return false unless @monotonic.call - completion[:at] < Hub::PREPARATION_SECONDS
@@ -1190,7 +1255,7 @@ module EO::Engine
       #   @return [String] the follower's own name
       # @!attribute [r] hunt_id
       #   @return [String, nil] the hunt joined, nil until register succeeds
-      attr_reader :name, :hunt_id
+      attr_reader :name, :hunt_id, :native_reader
 
       # @param hub [Hub] the leader's Hub, usually a DRb proxy
       # @param name [String] the follower's own name
@@ -1198,10 +1263,14 @@ module EO::Engine
       # @param clock [#now] the time source
       # @param strict_movement [Boolean] require a strict Hub and episode acknowledgments
       # @param identity_reader [#call, nil] current complete follower identity, required in strict mode
+      # @param native_reader [#call, nil] current native player-state publication, required in strict mode
       # @return [Member] an unregistered follower link
-      # @raise [ArgumentError] when strict mode has no callable identity reader
-      def initialize(hub, name:, deadline: DEADLINE, clock: Time, strict_movement: false, identity_reader: nil)
-        raise ArgumentError, 'strict member requires an identity reader' if strict_movement && !identity_reader.respond_to?(:call)
+      # @raise [ArgumentError] when strict mode lacks either required reader
+      def initialize(hub, name:, deadline: DEADLINE, clock: Time, strict_movement: false, identity_reader: nil,
+                     native_reader: nil)
+        if strict_movement && (!identity_reader.respond_to?(:call) || !native_reader.respond_to?(:call))
+          raise ArgumentError, 'strict member requires identity and native player-state readers'
+        end
 
         @hub = hub
         @name = name.to_s
@@ -1212,6 +1281,7 @@ module EO::Engine
         @state = {}
         @strict_movement = strict_movement == true
         @identity_reader = identity_reader
+        @native_reader = native_reader
         @strict_identity = Group.protocol_copy(identity_reader.call) if strict_movement?
       end
 
@@ -1725,8 +1795,10 @@ module EO::Engine
       # @param stance [#call, nil] (name) -> Boolean; default Lich's Stance.change
       # @param movement_idle [#call, nil] local cleanup/hand ownership check
       # @param clock [#now] the time source
+      # @param monotonic [#call] monotonic seconds comparable to native source time
       def initialize(member:, policy:, counters: EO::Engine::Rest::Counters.new, assist: nil, follow: nil, loot: nil, sneaky: false,
-                     travel: nil, fog: nil, scripts: nil, stance: nil, movement_idle: nil, clock: Time)
+                     travel: nil, fog: nil, scripts: nil, stance: nil, movement_idle: nil, clock: Time,
+                     monotonic: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
         super(policy: policy, counters: counters, travel: travel, fog: fog, scripts: scripts, stance: stance, loot: nil, clock: clock)
         @member = member
         @assist = assist
@@ -1743,6 +1815,7 @@ module EO::Engine
         @after = nil
         @pending_ack = nil
         @movement_idle = movement_idle || ->(world) { !@loot&.looting? && !@assist&.owns_hands?(world) }
+        @native_cut = Group::NativeCut.new(reader: member.native_reader, monotonic: monotonic) if member.strict_movement?
         @movement_order = nil
         @movement_candidate = nil
         @movement_cancel = nil
@@ -1791,13 +1864,18 @@ module EO::Engine
       def complete_owner_tick(world, tick, state)
         return unless strict_movement? && @movement_order
 
-        before = [world.room.id, world.room.count]
-        unless state[:state] == :running && movement_prepared?(world) && before == [world.room.id, world.room.count]
+        candidate = @native_cut.capture(world) do
+          before = [world.room.id, world.room.count]
+          if state[:state] == :running && movement_prepared?(world) && before == [world.room.id, world.room.count]
+            { owner_tick: tick, room: before.first, room_epoch: before.last }.freeze
+          end
+        end
+        unless candidate
           @movement_cancel = @movement_order
           @movement_candidate = nil
           return
         end
-        @movement_candidate = { owner_tick: tick, room: before.first, room_epoch: before.last }.freeze
+        @movement_candidate = candidate
       end
 
       # Publish only previously completed work, with a current local check.
@@ -1812,13 +1890,18 @@ module EO::Engine
           @movement_cancel = nil
         end
         return false unless @movement_order && @movement_candidate
-        unless movement_prepared?(world)
+        accepted = @native_cut.capture(world) do
+          next false unless movement_prepared?(world)
+
+          @member.ack_movement(@movement_order, **@movement_candidate)
+        end
+        unless accepted == true
           @member.cancel_movement(@movement_order)
           @movement_candidate = nil
           return false
         end
 
-        @member.ack_movement(@movement_order, **@movement_candidate)
+        true
       end
 
       # The step in progress; else the pending prepare_move ack once out

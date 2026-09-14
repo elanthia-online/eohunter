@@ -19,9 +19,13 @@ RSpec.describe 'strict movement entrypoint wiring' do
   let(:parser) { double('native parser', alive?: true) }
   let(:reader) { double('native reader', alive?: true) }
   let(:game) { OpenStruct.new(thread: parser, reader_thread: reader, closed?: false, remote_eof?: false) }
+  let(:native_state) { { source: { connection_id: 'native', sequence: 1, received_at: 1.0 }, fields: {} }.freeze }
 
   before do
     stub_const('Game', game)
+    sample = native_state
+    game.define_singleton_method(:enable_player_state!) { true }
+    game.define_singleton_method(:player_state) { sample }
     stub_const('Char', OpenStruct.new(name: 'Testmage'))
     stub_const('XMLData', OpenStruct.new(game: 'TEST'))
     allow(Script).to receive(:current).and_return(owner)
@@ -62,6 +66,11 @@ RSpec.describe 'strict movement entrypoint wiring' do
   it 'refuses strict admission when native per-send guards are unavailable' do
     allow(Script).to receive(:current).and_return(Object.new)
     expect { adapter.group_identity_reader }.to raise_error(ArgumentError, /per-send/)
+  end
+
+  it 'enables and reads the native player-state publication' do
+    reader = adapter.group_native_reader
+    expect(reader.call).to equal(native_state)
   end
 
   it 'rejects count-only and LAN strict leaders before sending group commands' do

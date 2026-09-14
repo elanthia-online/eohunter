@@ -88,12 +88,20 @@ RSpec.describe 'strict group movement behaviors' do
     let(:order) { EO::Engine::Group::Order.new(type: :prepare_move, hunt_id: 'hunt', room: 1, at: Time.now, step_id: 'step') }
     let(:incoming) { [order] }
     let(:idle) { [true] }
-    let(:member) { double('strict member', strict_movement?: true, cancel_movement: true, ack_movement: true) }
+    let(:native_state) do
+      [{ source: { connection_id: 'native-test', sequence: 1, received_at: 100.0 },
+         fields: { room: { value: { uid: 1, epoch: 4 } } } }.freeze]
+    end
+    let(:member) do
+      double('strict member', strict_movement?: true, native_reader: -> { native_state.first },
+                              cancel_movement: true, ack_movement: true)
+    end
     let(:assist) { double('assist', stand_down!: false) }
     let(:follow) { double('follow', rejoin!: false) }
     let(:orders) do
       EO::Engine::Behaviors::Orders.new(member: member, policy: EO::Engine::Rest::Policy.new,
-                                        assist: assist, follow: follow, movement_idle: ->(_world) { idle.first })
+                                        assist: assist, follow: follow, movement_idle: ->(_world) { idle.first },
+                                        monotonic: -> { 100.0 })
     end
 
     before { allow(member).to receive(:orders) { incoming.shift(incoming.size) } }
@@ -154,6 +162,15 @@ RSpec.describe 'strict group movement behaviors' do
     it 'rejects a room change during the local completion capture' do
       accept_prepare
       allow(orders).to receive(:movement_idle?) { room.count += 1; true }
+      orders.complete_owner_tick(world, 7, state: :running)
+      expect(member).not_to receive(:ack_movement)
+      expect(orders.publish_movement(world)).to be false
+    end
+
+    it 'rejects a parser publication replaced during the local completion capture' do
+      accept_prepare
+      replacement = native_state.first.merge(source: native_state.first[:source].merge(sequence: 2)).freeze
+      allow(orders).to receive(:movement_idle?) { native_state[0] = replacement; true }
       orders.complete_owner_tick(world, 7, state: :running)
       expect(member).not_to receive(:ack_movement)
       expect(orders.publish_movement(world)).to be false

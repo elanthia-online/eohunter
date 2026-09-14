@@ -536,6 +536,20 @@ module EOHunter
     end
   end
 
+  # Enable and read Lich's immutable native parser publication. Strict group
+  # movement uses this as a version fence around its existing World policy;
+  # the publication itself never decides whether movement is safe.
+  #
+  # @return [Proc] returns the current frozen player-state sample or nil
+  def self.group_native_reader
+    unless Game.respond_to?(:enable_player_state!) && Game.respond_to?(:player_state)
+      raise ArgumentError, 'strict group movement requires native Lich player-state observations'
+    end
+
+    Game.enable_player_state!
+    -> { Game.player_state }
+  end
+
   # bigshot head: group open, serve the hub, whisper the uri
   # to the group until everyone expected has registered. Exits the script
   # with no group to lead or when the rally times out.
@@ -555,6 +569,7 @@ module EOHunter
       raise ArgumentError, 'strict group movement requires explicit follower names on this machine: head <name> <name>'
     end
     identity_reader = group_identity_reader if strict
+    native_reader = group_native_reader if strict
     E::Actions::GroupOpen.new(world).call
     E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
     expected = if args.first.to_s =~ /\A\d+\z/ then args.first.to_i
@@ -593,7 +608,7 @@ module EOHunter
     hub.activate!
     msg('info', "group: #{hub.members.join(', ')}")
     E::Group::Leader.new(hub, name: Char.name, policy: profile.group_policy,
-                          strict_movement: strict, identity_reader: identity_reader)
+                          strict_movement: strict, identity_reader: identity_reader, native_reader: native_reader)
   end
 
   # bigshot tail: the rally whisper names the uri unless
@@ -608,6 +623,7 @@ module EOHunter
   #   or the wait for it timed out
   def self.follow(args, strict_movement: false)
     identity_reader = group_identity_reader if strict_movement
+    native_reader = group_native_reader if strict_movement
     uri = args.first.to_s =~ %r{\Adruby://} ? args.first : nil
     unless uri
       hook = proc do |line|
@@ -629,7 +645,8 @@ module EOHunter
     end
     DRb.start_service
     hub = DRbObject.new_with_uri(uri)
-    member = E::Group::Member.new(hub, name: Char.name, strict_movement: strict_movement, identity_reader: identity_reader)
+    member = E::Group::Member.new(hub, name: Char.name, strict_movement: strict_movement,
+                                  identity_reader: identity_reader, native_reader: native_reader)
     msg('info', "joining the group at #{uri}")
     120.times do
       break if member.register

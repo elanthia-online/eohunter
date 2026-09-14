@@ -59,7 +59,7 @@ RSpec.describe 'EOHunter wiring' do
   end
 
   it 'builds a follower with Orders, Assist and Follow in place of Rest, Engage and Wander' do
-    member = instance_double(EO::Engine::Group::Member)
+    member = instance_double(EO::Engine::Group::Member, strict_movement?: false)
     behaviors = wiring.build_follower(profile, world, member)
 
     expect(behaviors[:rest]).to be_a(EO::Engine::Behaviors::Orders)
@@ -71,7 +71,7 @@ RSpec.describe 'EOHunter wiring' do
   end
 
   it 'passes the same exact child adapter to follower travel and cleanup consumers' do
-    member = instance_double(EO::Engine::Group::Member)
+    member = instance_double(EO::Engine::Group::Member, strict_movement?: false)
     scripts = double('exact owned children')
     behaviors = wiring.build_follower(profile, world, member, scripts: scripts)
 

@@ -15,9 +15,11 @@ must name the followers explicitly, on the same machine:
 Counts, an inferred roster and `lan` are not accepted for strict leaders. A
 strict follower rejects a legacy leader and non-loopback endpoints. Both sides
 need this build and native `Script#with_execution_guard` support; strict
-admission refuses when that capability is missing. The existing transport assumes cooperating local processes;
-these checks are safety and replay controls, not a sandbox against hostile code
-running under the same operating-system account.
+admission refuses when that capability is missing. Strict mode also requires
+Lich's opt-in native player-state publication; existing profiles never enable it.
+The existing transport assumes cooperating local processes; these checks are
+safety and replay controls, not a sandbox against hostile code running under
+the same operating-system account.
 
 ## Each hunting-room movement
 
@@ -27,8 +29,12 @@ hand transaction finish, then records preparation after a completed engine turn.
 The next turn publishes that evidence. Heartbeats and old reports cannot renew
 it. The leader needs a recent completed turn too.
 
-The final movement action checks local life, restraint, hard/cast RT, physical
-group presence, cleanup/combat ownership and the full fresh acknowledgment set
+The completed turn and final movement action each fence the existing local life,
+restraint, hard/cast RT, room, physical-group, cleanup/combat and acknowledgment
+policy inside one immutable native parser publication. A parser dispatch that
+begins or completes during those reads rejects the decision. Publications older
+than five seconds, incomplete room arrivals and mismatched room epochs are also
+unknown, never ready. The action then checks the full fresh acknowledgment set
 at the actual native command-send boundary, including waits inside Lich's move
 helper. It consumes the episode for one exact movement command. A native retry
 needs a new episode; this action will not resend on the old permission.
@@ -44,11 +50,12 @@ hunting go2 trip.
 
 ## Limits
 
-This is an acknowledgment of preparation, **not an atomic group snapshot**.
-A follower can enter RT after acknowledging; receipts expire after one second
-and the whole episode after five seconds, but the game does not offer a
-transaction that moves all participants atomically. Each room epoch is local
-to its character and is never compared numerically across characters.
+This is an acknowledgment of preparation, **not an atomic group snapshot** or a
+game-server send lease. A packet may still be queued behind the reader, and a
+follower can enter RT after acknowledging. Receipts expire after one second and
+the whole episode after five seconds, but the game does not offer a transaction
+that moves all participants atomically. Each room epoch is local to its
+character and is never compared numerically across characters.
 
 Outbound/return go2 travel, emergency movement and a separated follower's
 existing catchup are not converted to per-step episodes here. The feature does
