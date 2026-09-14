@@ -17,6 +17,8 @@ module CoordinationProjectionSpecSupport
     end
 
     def add(name, action, **options)
+      raise ArgumentError, "not a Proc (#{action.inspect})" unless action.is_a?(Proc)
+
       @handlers[name] = action
       @options[name] = options
     end

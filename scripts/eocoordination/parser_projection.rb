@@ -46,9 +46,9 @@ module EO
         if @socket_hook.respond_to?(:add_script_hook)
           @socket_hook.add_script_hook(@hook_name, &method(:input_received))
         else
-          @socket_hook.add(@hook_name, method(:input_received))
+          @socket_hook.add(@hook_name, method(:input_received).to_proc)
         end
-        @downstream_hook.add(@hook_name, method(:dispatch_completed),
+        @downstream_hook.add(@hook_name, method(:dispatch_completed).to_proc,
                              persist: false, priority: HOOK_PRIORITY)
         @mutex.synchronize { @installed = true }
         true
