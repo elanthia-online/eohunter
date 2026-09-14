@@ -65,6 +65,9 @@ module EO::Engine
     # The rest of bigshot's cmd_* vocabulary: `run` matches a routine word
     # and hands it to its Action; see the file header.
     module Routines
+      # The prefix words alone, so a caller that must recognize a prefixed
+      # line without running it shares this list rather than restating it.
+      PREFIX_WORDS = %w[celerity haste 506 slayer 240 tonis 1035].freeze
       # The buff-then-command prefixes (cmd 3359-3387): celerity/haste/506,
       # slayer/240, tonis/1035, each followed by the command.
       #
@@ -74,7 +77,7 @@ module EO::Engine
       # buff and then do something else, and a bare cast mode is not
       # something else. The lookahead leaves those to SPELL; every other
       # word ("506 attack", "240 cman bullrush") is a prefix as before.
-      PREFIX = /^(celerity|haste|506|slayer|240|tonis|1035)\s+(?!(?:open|closed|cast|channel|evoke)\b)(.*)/i
+      PREFIX = /^(#{Regexp.union(PREFIX_WORDS).source})\s+(?!(?:open|closed|cast|channel|evoke)\b)(.*)/i
       # The aspects ASSUME accepts; bigshot cmd_assume's list.
       ASPECTS = /^(?:jackal|wolf|lion|panther|hawk|owl|porcupine|rat|bear|burgee|mantis|serpent|spider|yierka)$/i
 

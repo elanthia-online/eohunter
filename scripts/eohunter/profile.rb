@@ -308,6 +308,12 @@ module EO::Engine
 
     private
 
+    # A prefixed line that would repeat or re-dispatch a preparation. The
+    # prefix words come from Routines::PREFIX_WORDS so this guard cannot
+    # drift from the words the dispatcher actually treats as prefixes;
+    # force and eachtarget are matched at their own dispatch sites.
+    PREPARE_PREFIX = /\A(?:force|eachtarget|#{Regexp.union(Engage::Routines::PREFIX_WORDS).source})\b.*\bprepare\s+[a-z]/i
+
     def validate_preparation_words!
       return if preparations.empty?
 
@@ -319,7 +325,7 @@ module EO::Engine
           raise ArgumentError, "named preparations in #{key} cannot use 'and' arrays; use comma-separated prepare NAME entries"
         end
         Engage::Routine.parse(Array(entries).flatten).each do |line|
-          if routine && line.text.match?(/\A(?:force|eachtarget|celerity|haste|506|slayer|240|tonis|1035)\b.*\bprepare\s+[a-z]/)
+          if routine && line.text.match?(PREPARE_PREFIX)
             raise ArgumentError, "preparations cannot use routine prefixes in #{key}; use modifiers on prepare NAME"
           end
           name = Preparations.name(routine ? line.text : line.raw)
