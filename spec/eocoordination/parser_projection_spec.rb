@@ -33,6 +33,12 @@ module CoordinationProjectionSpecSupport
       end
     end
   end
+
+  class LegacyProjectionHook < ProjectionHook
+    def add(name, action, persist: nil)
+      super(name, action, persist: persist)
+    end
+  end
 end
 
 RSpec.describe EO::Coordination::ParserProjection do
@@ -119,6 +125,18 @@ RSpec.describe EO::Coordination::ParserProjection do
     projection.close
     expect(socket_hook.handlers).to be_empty
     expect(downstream_hook.handlers).to be_empty
+  end
+
+  it 'fails before registration when deterministic downstream priority is unavailable' do
+    legacy = CoordinationProjectionSpecSupport::LegacyProjectionHook.new
+    projection = described_class.new(game: game, xml: xml, game_objects: game_objects,
+                                     socket_hook: socket_hook, downstream_hook: legacy)
+
+    expect { projection.install! }.to raise_error(ArgumentError, /DownstreamHook\.add\(priority:/)
+    expect(socket_hook.handlers).to be_empty
+    expect(legacy.handlers).to be_empty
+  ensure
+    projection&.close
   end
 
   it 'publishes one immutable cut after the newest received input completes parsing' do

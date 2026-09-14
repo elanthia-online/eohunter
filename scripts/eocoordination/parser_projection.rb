@@ -41,6 +41,7 @@ module EO
       # @return [Boolean] true when installed
       def install!
         @mutex.synchronize { return true if @installed }
+        ensure_priority_support!
 
         if @socket_hook.respond_to?(:add_script_hook)
           @socket_hook.add_script_hook(@hook_name, &method(:input_received))
@@ -94,6 +95,14 @@ module EO
       end
 
       private
+
+      def ensure_priority_support!
+        parameters = @downstream_hook.method(:add).parameters
+        supported = parameters.any? { |kind, name| name == :priority || kind == :keyrest }
+        return if supported
+
+        raise ArgumentError, 'ParserProjection requires DownstreamHook.add(priority:) support'
+      end
 
       # Runs inline on Lich's socket reader before the line enters the parser
       # queue. A new input makes every preceding parser cut stale immediately.
