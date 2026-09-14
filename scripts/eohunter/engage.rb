@@ -844,16 +844,19 @@ module EO::Engine
       # @param group [Group::Leader, nil] the followers to order to attack
       # @param fried [#call] -> Boolean, for disable_commands in a group
       # @param state [Engage::State] shared with Wander for the blocked room
+      # @param area [Wander::Area, nil] the hunting area; a creature met
+      #   outside it is passed by, so the walk home is not a fight
       # @param routine_selector [#call, nil] (creature, letter) -> letter, the
       #   script's override of the routine choice
       # @param clock [#now] the time source, injectable for specs
       def initialize(policy:, targets_policy:, wander_policy: EO::Engine::Wander::Policy.new, mstrike_policy: Actions::Mstrike::Policy.new,
                      state: EO::Engine::Engage::State.new, maintain_state: EO::Engine::Maintain::State.new, scripts: nil, stance: nil,
-                     group: nil, fried: nil, routine_selector: nil, clock: Time)
+                     group: nil, fried: nil, routine_selector: nil, area: nil, clock: Time)
         super()
         @policy = policy
         @targets_policy = targets_policy
         @wander_policy = wander_policy
+        @area = area
         @mstrike_policy = mstrike_policy
         @state = state
         @maintain_state = maintain_state
@@ -942,6 +945,7 @@ module EO::Engine
         # and every behaviour read the room as combat-blocked. Nothing is
         # blocked until something blocks it.
         return false if @state.combat_blocked_room && @state.combat_blocked_room.to_s == world.room.id.to_s
+        return false unless in_bounds?(world)
         return false unless claimed_here?(world)
 
         !next_target(world).nil?
@@ -959,6 +963,21 @@ module EO::Engine
 
         candidate = loadout_target(world)
         !candidate.nil? && candidate.id.to_s == @target.id.to_s
+      end
+
+      # A creature met on the way to the hunting area is not our fight:
+      # Wander is walking home, and stopping to kill it strands the walk
+      # (it killed go2 to take the tick, then had to travel again). A
+      # fight already under way in this room still finishes; so does a
+      # profile with no area built, where every room is in bounds.
+      #
+      # @param world [World]
+      # @return [Boolean]
+      def in_bounds?(world)
+        return true unless @area&.built?
+        return true if @state.fight_room && @state.fight_room.to_s == world.room.id.to_s
+
+        @area.include?(world.room.id)
       end
 
       # bigshot asks the claim on entering a room, not again once it is
