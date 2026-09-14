@@ -100,6 +100,11 @@ The controller requires Lich's execution guards and exact child lifecycle in
 addition to the normal Hunter dependencies. The rebased implementation is
 verified offline; renewed live acceptance against this combination is pending.
 
+Optional cross-process mechanics live in the on-demand
+[`libeocoordination`](docs/guides/coordination-library.md) script library rather
+than Lich core. Lich owns parser-coherent facts and script execution; the
+library owns bounded transport, discovery, operation delivery, and receipts.
+
 ## How it works
 
 Each tick, about four times a second, the engine asks every behavior in
