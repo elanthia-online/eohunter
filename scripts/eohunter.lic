@@ -109,6 +109,8 @@ module EOHunter
   RALLY_TIMEOUT = 60 # bigshot head 9897
   # Seconds between rally whispers (bigshot head 9899).
   RALLY_EVERY = 3 # bigshot head 9899
+  # Independently distributed coordination-library API consumed by strict mode.
+  COORDINATION_LIBRARY_VERSION = '0.1.0'.freeze
   # The leader's rally whisper, capturing the DRb uri.
   RALLY_LINE = %r{eohunter rallying at (druby://[^\s"<]+?)\.?["<]}i
 
@@ -117,6 +119,17 @@ module EOHunter
   # @param text [String]
   # @return [void]
   def self.msg(kind, text) = Lich::Messaging.msg(kind, "eohunter: #{text}")
+
+  # Load the optional coordination library only for features that consume it.
+  # Ordinary solo and legacy group hunts retain their existing dependencies.
+  # @return [Module] EO::Coordination
+  def self.load_coordination_library
+    Script.loadlib('libeocoordination') unless defined?(::EO::Coordination::ParserProjection)
+    ::EO::Coordination.require_version(COORDINATION_LIBRARY_VERSION)
+    ::EO::Coordination
+  rescue StandardError => e
+    raise ArgumentError, "strict coordination requires libeocoordination #{COORDINATION_LIBRARY_VERSION}: #{e.message}"
+  end
 
   # Where this character's bigshot profile lives.
   # @param name [String] the profile name
@@ -536,18 +549,16 @@ module EOHunter
     end
   end
 
-  # Enable and read Lich's immutable native parser publication. Strict group
-  # movement uses this as a version fence around its existing World policy;
-  # the publication itself never decides whether movement is safe.
+  # Install libeocoordination's passive parser projection. It composes Lich's
+  # existing SocketReadHook and DownstreamHook and supplies only a version fence
+  # around existing World policy; the publication never decides movement.
   #
-  # @return [Proc] returns the current frozen player-state sample or nil
+  # @return [#call] returns the current frozen parser sample or nil
   def self.group_native_reader
-    unless Game.respond_to?(:enable_player_state!) && Game.respond_to?(:player_state)
-      raise ArgumentError, 'strict group movement requires native Lich player-state observations'
-    end
-
-    Game.enable_player_state!
-    -> { Game.player_state }
+    coordination = load_coordination_library
+    projection = coordination::ParserProjection.new
+    projection.install!
+    projection
   end
 
   # bigshot head: group open, serve the hub, whisper the uri
@@ -767,11 +778,18 @@ if mode == 'tail'
   EO::Engine::Watch.install!
   before_dying do
     engine.stop!(:script_killed)
-    member.stop_pulse!
-    # the follower's own service, started at the join above
-    DRb.stop_service
-    EO::Engine::Watch.uninstall!
-    EO::Engine::Events.reset!
+    begin
+      member.stop_pulse!
+      # the follower's own service, started at the join above
+      DRb.stop_service
+    ensure
+      begin
+        member.native_reader.close if member.native_reader.respond_to?(:close)
+      ensure
+        EO::Engine::Watch.uninstall!
+        EO::Engine::Events.reset!
+      end
+    end
   end
   engine.run
   member.stop_pulse!
@@ -872,10 +890,15 @@ before_dying do
     DRb.stop_service if leader
     fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot
   ensure
-    EO::Engine::Watch.uninstall!
-    EO::Engine::Events.reset!
-    # the lambda closes over this run's engine; a restart sets its own
-    EO::Engine::Actions::Base.interrupt = nil
+    reader = leader&.native_reader
+    begin
+      reader.close if reader.respond_to?(:close)
+    ensure
+      EO::Engine::Watch.uninstall!
+      EO::Engine::Events.reset!
+      # the lambda closes over this run's engine; a restart sets its own
+      EO::Engine::Actions::Base.interrupt = nil
+    end
   end
 end
 

@@ -23,11 +23,15 @@ RSpec.describe 'strict movement entrypoint wiring' do
 
   before do
     stub_const('Game', game)
-    sample = native_state
-    game.define_singleton_method(:enable_player_state!) { true }
-    game.define_singleton_method(:player_state) { sample }
     stub_const('Char', OpenStruct.new(name: 'Testmage'))
     stub_const('XMLData', OpenStruct.new(game: 'TEST'))
+    stub_const('EO::Coordination', Module.new) unless defined?(EO::Coordination)
+    @projection = double('parser projection', install!: true, call: native_state, close: nil)
+    projection_class = Class.new
+    allow(projection_class).to receive(:new).and_return(@projection)
+    stub_const('EO::Coordination::ParserProjection', projection_class)
+    allow(EO::Coordination).to receive(:require_version).and_return(true)
+    allow(Script).to receive(:loadlib)
     allow(Script).to receive(:current).and_return(owner)
     allow(Script).to receive(:list).and_return([owner])
   end
@@ -68,8 +72,9 @@ RSpec.describe 'strict movement entrypoint wiring' do
     expect { adapter.group_identity_reader }.to raise_error(ArgumentError, /per-send/)
   end
 
-  it 'enables and reads the native player-state publication' do
+  it 'installs and reads the external parser projection' do
     reader = adapter.group_native_reader
+    expect(reader).to equal(@projection)
     expect(reader.call).to equal(native_state)
   end
 

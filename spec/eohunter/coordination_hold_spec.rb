@@ -5,9 +5,9 @@ require_relative 'support/fake_world'
 
 RSpec.describe EO::Engine::Coordination::HoldPilot do
   before(:context) do
-    root = ENV['LICH_COORDINATION_ROOT']
-    skip 'set LICH_COORDINATION_ROOT to the coordinated-operations checkout' if root.nil? || root.empty?
-    require File.join(File.expand_path(root), 'lib/internal_api/coordination')
+    root = ENV['EO_COORDINATION_ROOT']
+    skip 'set EO_COORDINATION_ROOT to the libeocoordination scripts directory' if root.nil? || root.empty?
+    require File.join(File.expand_path(root), 'eocoordination/protocol')
   end
 
   let(:world) { FakeWorld.new }
@@ -26,7 +26,7 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
   end
   let(:descriptor) { pilot.start }
   let(:client) do
-    Lich::InternalAPI::Coordination::Operations::Client.new(
+    EO::Coordination::Operations::Client.new(
       descriptor: descriptor, control_token: 'dedicated-control-test-token', local_identity: peer
     )
   end

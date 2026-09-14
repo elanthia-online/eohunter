@@ -114,7 +114,7 @@ module EO::Engine
       end
     end
 
-    # Version fence over Lich's opt-in native parser publication. It does not
+    # Version fence over libeocoordination's opt-in parser publication. It does not
     # decide policy: the caller runs its existing local predicate inside the
     # cut. A parser dispatch beginning or completing during that predicate
     # withdraws or replaces the publication and rejects the result.
@@ -123,7 +123,7 @@ module EO::Engine
       # @return [Float] maximum accepted socket-ingress age in seconds
       MAX_AGE_SECONDS = 5.0
 
-      # @param reader [#call] returns Game.player_state
+      # @param reader [#call] returns the external immutable parser projection
       # @param monotonic [#call] monotonic seconds comparable to source received_at
       # @param max_age [Numeric] oldest native cut accepted for local policy
       def initialize(reader:, monotonic: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, max_age: MAX_AGE_SECONDS)
@@ -759,7 +759,9 @@ module EO::Engine
       #   @return [Policy] the MA Grouping settings
       # @!attribute [r] name
       #   @return [String] the leader's own name
-      attr_reader :hub, :policy, :name
+      # @!attribute [r] native_reader
+      #   @return [#call, nil] owned strict parser projection
+      attr_reader :hub, :policy, :name, :native_reader
 
       # Trusted owner-thread adapter receiving a movement policy and block.
       # An already guarded runtime composes the policy into its existing
@@ -794,6 +796,7 @@ module EO::Engine
         @lost = []
         @strict_movement = strict_movement == true
         @identity_reader, @room_epoch_reader, @monotonic = identity_reader, room_epoch, monotonic
+        @native_reader = native_reader
         @native_cut = NativeCut.new(reader: native_reader, monotonic: monotonic) if strict_movement?
         @movement_idle = movement_idle
         @strict_identity = Group.protocol_copy(identity_reader.call) if strict_movement?

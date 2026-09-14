@@ -3,9 +3,9 @@
 module EO::Engine
   # Opt-in coordination adapters; loading them never starts a listener.
   module Coordination
-    # Safe-room hold/release policy over Lich's generic coordinated-operations
-    # interface. Lich owns delivery, identity, replay and receipt mechanics;
-    # this adapter alone decides when EOHunter may pause or resume.
+    # Safe-room hold/release policy over libeocoordination's generic operations
+    # interface. The library owns delivery, identity, replay and receipts; this
+    # adapter alone decides when EOHunter may pause or resume.
     class HoldPilot
       # Fixed hold lifetime; expiry stops the pilot rather than resuming work.
       HOLD_SECONDS = 15.0
@@ -29,7 +29,7 @@ module EO::Engine
       def initialize(engine:, session:, peer:, control_token:, safe_room:, eligible:,
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
         operations = native_operations
-        schema = ::Lich::InternalAPI::Coordination::Schema
+        schema = ::EO::Coordination::Schema
         unless engine.status[:behaviors].empty? && !engine.stopping? &&
                schema.identity?(session.identity) && schema.identity?(peer) &&
                schema.string?(control_token) && safe_room.is_a?(Integer) && safe_room.positive? &&
@@ -87,9 +87,12 @@ module EO::Engine
       private
 
       def native_operations
-        return ::Lich::InternalAPI::Coordination::Operations if defined?(::Lich::InternalAPI::Coordination::Operations::Grant)
+        Script.loadlib('libeocoordination') unless defined?(::EO::Coordination::Operations::Grant)
+        return ::EO::Coordination::Operations if defined?(::EO::Coordination::Operations::Grant)
 
-        raise ArgumentError, 'load Lich coordinated operations first'
+        raise ArgumentError, 'load libeocoordination first'
+      rescue StandardError => e
+        raise ArgumentError, "load libeocoordination first: #{e.message}"
       end
 
       # The start callback only rechecks local policy and applies work already

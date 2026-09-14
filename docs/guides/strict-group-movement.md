@@ -15,8 +15,9 @@ must name the followers explicitly, on the same machine:
 Counts, an inferred roster and `lan` are not accepted for strict leaders. A
 strict follower rejects a legacy leader and non-loopback endpoints. Both sides
 need this build and native `Script#with_execution_guard` support; strict
-admission refuses when that capability is missing. Strict mode also requires
-Lich's opt-in native player-state publication; existing profiles never enable it.
+admission refuses when that capability is missing. Strict mode also loads the
+independently distributed `libeocoordination` library and explicitly installs
+its passive parser projection; existing profiles never install it.
 The existing transport assumes cooperating local processes; these checks are
 safety and replay controls, not a sandbox against hostile code running under
 the same operating-system account.
@@ -31,10 +32,12 @@ it. The leader needs a recent completed turn too.
 
 The completed turn and final movement action each fence the existing local life,
 restraint, hard/cast RT, room, physical-group, cleanup/combat and acknowledgment
-policy inside one immutable native parser publication. A parser dispatch that
-begins or completes during those reads rejects the decision. Publications older
-than five seconds, incomplete room arrivals and mismatched room epochs are also
-unknown, never ready. The action then checks the full fresh acknowledgment set
+policy inside one immutable parser publication. `SocketReadHook` withdraws the
+cut before new input is queued; `DownstreamHook` republishes after the newest
+input completes native parsing. A dispatch that begins or completes during
+those reads therefore rejects the decision. Publications older than five
+seconds, incomplete room arrivals and mismatched room epochs are also unknown,
+never ready. The action then checks the full fresh acknowledgment set
 at the actual native command-send boundary, including waits inside Lich's move
 helper. It consumes the episode for one exact movement command. A native retry
 needs a new episode; this action will not resend on the old permission.
@@ -79,6 +82,6 @@ Run the normal suite with `bundle exec rspec`. Protocol, behavior, profile and
 two-process DRb fixtures are included. Native execution-guard tests additionally
 require `LICH_EXECUTION_GUARD_ROOT` pointing to a reviewed Lich tree containing
 `lib/common/script_execution_guard.rb` and the matching Script methods. They
-are explicitly pending without that dependency. This is separate from
-`LICH_COORDINATION_ROOT`, which selects the read-only transport/hold contract;
-the two capabilities must not be assumed to ship in the same core revision.
+are explicitly pending without that dependency. Set `EO_COORDINATION_ROOT` to
+the installed library's `scripts` directory when running the coordination hold
+integration specs from a source checkout.
