@@ -48,6 +48,75 @@ YAML null, blank string, or wrong container type is a configuration error.
 
 ## Resting
 
+`preparations` is an optional structured mapping of named game commands whose
+results come from Lich's Combat::Messages definitions. It defaults to `{}`;
+explicit null, an unknown field or a malformed entry refuses profile loading.
+
+```yaml
+preparations:
+  crystal:
+    perform: feed my crystal
+    result: user_feed_result
+    match: { item: crystal }
+    expect: { ok: true }
+    timeout: 6
+resting_room_id: 1234
+hunting_prep_commands: prepare crystal
+```
+
+Replace the example refuge with your resting room. Install the named message
+definition in Lich before using the preparation. Names, event names and payload
+keys are lowercase identifiers (`a-z`, digits and underscores, starting with a
+letter). `perform` is one nonblank game command, without semicolons or control
+characters. `result` is required and must be loaded immediately before sending;
+EOHunter reads the current names through World on every attempt. Unknown
+preparation names in command lists refuse profile loading.
+
+Optional `match` selects a response by scalar payload values; optional
+`expect` checks success after selecting it. Both default to `{}`. Missing fields
+never equal null. Numbers compare by value (`6` equals `6.0`); all other values
+retain strict types (`"6"` differs from `6`, and `"true"` differs from `true`).
+String and symbol keys identify the same payload field. Nested mappings
+and arrays are not supported. With no `expect`, any correlated event confirms
+success. A correlated event failing `expect` returns `failed/denied`, preserving
+the event; silence or only unrelated events returns `timeout/no_confirmation`.
+An unloaded result name fails before sending, rather than being treated as denial.
+`timeout` defaults to 8 seconds and must be a numeric, finite value greater than
+zero and at most 30 seconds. This bounds the confirmation wait after the send;
+the existing action roundtime and send ladder retain their own separate bounds.
+
+`prepare NAME` works in hunting routines and in `hunting_prep_commands`,
+`resting_commands`, `field_hunting_prep_commands` and `field_rest_commands`.
+Both paths call the same action. Routine modifiers remain the scheduling
+interface; see [Routines](routines.md). Prep/rest lists take plain `prepare NAME`
+words. Existing bare commands, including numeric `prepare 101`, retain their
+existing command path.
+In prep/rest lists, separate preparation steps with commas; named preparations
+inside an `and` array refuse loading so each preparation gets its own tick.
+When `preparations` is absent or empty, all existing command words retain their
+old meaning, including `prepare spirit warding i`. A nonempty mapping opts into
+named `prepare NAME` words; numeric spell preparation remains available, while
+other unknown preparation names are configuration errors.
+
+Preparations currently support ordinary solo hunts and require a positive
+`resting_room_id`. Group, bounty and controlled LAB profiles reject configured
+preparations, including dormant definitions. Their coordinated recovery and
+command authority have not been extended by this feature.
+
+A failed or unconfirmed preparation ends the hunt: away from the refuge, the
+existing Rest return takes control while urgent survival behaviors remain
+available; at the refuge the engine stops. A failed return reports stranded and
+stops. Further preparation words are suppressed during that return, and hunting
+does not resume automatically. A pre-send transient gate keeps the preparation
+pending because nothing was consumed. Inspect the actual item and game result
+before restarting; there is no automatic retry of an uncertain consumptive action.
+
+The action arms its listener before sending. This catches immediate replies and
+ignores events already delivered before arming, but cannot prove causation if
+Lich delivers an older scanned line late. Include useful item/target correlation
+fields in the definition and `match`; no regex observers or inferred item-state
+latch are added by EOHunter.
+
 `combat_buffs` is an optional structured mapping, disabled by default. It
 configures which beneficial spells Maintain must restore and which losses ask
 Rest for field/town recovery. See [Combat buff policy](combat-buffs.md) for the

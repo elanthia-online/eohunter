@@ -4,6 +4,15 @@ require 'ostruct'
 require_relative 'engine_helper'
 
 RSpec.describe EO::Engine::World do
+  it 'reads named message availability fresh across definition reloads' do
+    messages = double('Messages', events: [:user_feed_result])
+    world = described_class.new
+    allow(world).to receive(:messages).and_return(messages)
+    expect(world.message_events).to eq([:user_feed_result])
+    allow(messages).to receive(:events).and_return(['other_result'])
+    expect(world.message_events).to eq([:other_result])
+  end
+
   # Test double mirroring Lich's shapes (GameObj: "Empty"-named hand objects,
   # frozen 'gone' statuses; XMLData: indicator hash of 'y'/'n').
   let(:npc) { Struct.new(:id, :noun, :name, :status) }

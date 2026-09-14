@@ -26,7 +26,7 @@ module EO::Engine
       :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
       :fog_return, :fog_optional, :fog_rift, :custom_fog,
       :resting_commands, :resting_scripts, :hunting_prep_commands, :hunting_scripts,
-      :wander_stance, :rest_interval, :sneaky, :encumbrance_grace, :sites,
+      :wander_stance, :rest_interval, :sneaky, :encumbrance_grace, :sites, :preparations,
       keyword_init: true
     ) do
       # The fried threshold; 101 (never) when the profile leaves it blank.
@@ -457,6 +457,16 @@ module EO::Engine
       # @return [String] the reason
       def rest!(reason)
         @forced_reason = reason
+      end
+
+      # A required preparation was denied or uncertain. Use the existing town
+      # return and suppress further preparations until the player restarts.
+      # This records a terminal hunt failure, never an inferred item state.
+      # @param reason [String] failed preparation and action outcome
+      # @return [Boolean] true
+      def preparation_failed!(reason)
+        @preparation_failure ||= reason
+        request_return!(@preparation_failure)
       end
 
       # A controller return is not a new hunting decision. Cancel only this
@@ -1038,6 +1048,18 @@ module EO::Engine
           return nil
         end
         line = @remaining.shift
+        if @policy.preparations && !@policy.preparations.empty? && (name = Preparations.name(line))
+          return Actions::Result.new(status: :skipped, reason: :preparation_aborted) if @preparation_failure
+
+          result = Actions::Prepare.new(world, name: name, preparations: @policy.preparations).call
+          if result.skipped?
+            @remaining.unshift(line)
+          elsif result.failed?
+            preparation_failed!("preparation #{name}: #{result.reason}")
+            service_failed(@preparation_failure) if world.room.id.to_s == @town_policy.resting_room.to_s
+          end
+          return result
+        end
         if line =~ /^script\s+(\S+)\s*(.*)/i
           name = Regexp.last_match(1)
           started = start_script(name, Regexp.last_match(2))

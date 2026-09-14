@@ -146,6 +146,7 @@ module EOHunter
     member = behaviors[:member]
     follower_return_prepped = false
     loadout_stranded = false
+    preparation_failure = nil
     # Every wait inside an action checks this, and nothing ever set it, so
     # stop! could not shorten an fput or a roundtime wait already in
     # flight and every interrupted? guard in the engine was inert.
@@ -157,6 +158,22 @@ module EOHunter
     E::Events.error_reporter = ->(type, error) { msg('error', "handler for #{type} raised #{error.class}: #{error.message}") }
     E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
     E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
+    E::Events.on(:preparation_failed) do |e|
+      preparation_failure ||= "preparation #{e.data[:name]}: #{e.data[:status]} (#{e.data[:reason]}); inspect before restarting"
+      msg('error', preparation_failure)
+      rest.preparation_failed!(preparation_failure)
+    end
+    E::Events.on(:rest_stranded) do
+      engine.stop!(:preparation_return_failed) if preparation_failure
+    end
+    engine.on_tick do |world|
+      next unless preparation_failure
+      next if E::Travel.active&.underway?
+
+      if rest_policy&.resting_room && world.room.id.to_s == rest_policy.resting_room.to_s
+        engine.stop!(:preparation_failed)
+      end
+    end
     E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
     E::Events.on(:watchdog_tripped) do |e|
       because = e.data[:reason] ? ": #{e.data[:reason]}" : ''
