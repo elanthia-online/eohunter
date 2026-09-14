@@ -134,8 +134,8 @@ coordination library.
 
 ## Test evidence (2026-09-13)
 
-- Coordination-library Adapter: 950 examples, zero failures in the predecessor
-  integrated run (seed 719); focused policy cases include an actual forked peer
+- Coordination-library Adapter: 954 examples, zero failures in the current
+  integrated run (seed 8119); focused policy cases include an actual forked peer
   talking over the bounded loopback endpoint.
 - The refactor removes EOHunter's duplicate transport, ticket, replay and receipt
   Implementation: 215 inserted lines against 350 removed across code and specs.
