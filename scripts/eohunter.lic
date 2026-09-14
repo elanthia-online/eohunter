@@ -314,7 +314,8 @@ module EOHunter
     flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker,
                                   group_nouns: -> { world.group_nouns },
                                   wander_stance: wander_policy.wander_stance)
-    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state, buffs: buffs)
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state, buffs: buffs,
+                                          signs_wanted: -> { rest.signs_phase? })
     rest.restore_buffs = maintain.method(:restore_buff) if buffs
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
@@ -448,7 +449,8 @@ module EOHunter
     flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker,
                                   group_nouns: -> { world.group_nouns },
                                   wander_stance: wander_policy.wander_stance)
-    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state,
+                                          signs_wanted: -> { orders.signs_wanted? })
     assist.on_fight { flee.engaged! }
     { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, loadout: loadout,
       maintain: maintain, engage: assist, wander: follow,
@@ -721,7 +723,13 @@ EOHunter.wire(engine, behaviors)
 rest = behaviors[:rest]
 engage = behaviors[:engage]
 if leader
-  engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) }
+  engine.on_tick do |w|
+    # :resting stays the whole non-hunting leg, which is what the followers'
+    # Survival and Loadout gate on. signs says the narrower thing - at the
+    # hunting room, where signs belong - so a follower holds its signs for
+    # the refuge and both walks and casts them on arrival.
+    leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target, signs: rest.signs_phase?)
+  end
   # the heartbeat again between ticks, so a blocking action never reads as a dead leader
   leader.keep_alive!
 end

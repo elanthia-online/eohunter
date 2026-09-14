@@ -501,6 +501,29 @@ module EO::Engine
       # @return [Boolean]
       def resting? = @phase != :hunting
 
+      # The phases where signs belong: standing in the hunting room, and
+      # hunting from it. bigshot's pre_hunt casts them at the hunting room
+      # (7315-7341), and Rest's :arrived issues the cast_signs group order
+      # there. Everything else - the refuge wait, the trip home, the trip
+      # back out - is either parked or travelling, and a sign cast then
+      # burns for the whole walk and dissipates before the first fight.
+      #
+      # Anything wanted earlier goes in the hunting prep commands, which
+      # are sent to the game verbatim, the way bigshot does it.
+      # :hold is not listed: it is the shared wait for nine different
+      # steps, including the disband and the rally on the way out. Only
+      # the one that lands at the hunting room counts, so it is tested
+      # through the hold's own destination rather than the phase.
+      SIGNS_PHASES = %i[arrived done hunting].freeze
+
+      # Whether signs are wanted now, as opposed to held for the walk.
+      # @return [Boolean]
+      def signs_phase?
+        return true if SIGNS_PHASES.include?(@phase)
+
+        @phase == :hold && @hold.is_a?(Hash) && @hold[:why] == :at_hunting_room
+      end
+
       # bigshot pre_hunt: the hunting prep commands and scripts,
       # the rally rooms and the hunting room before the first fight. The
       # same cycle as the back half of a rest.

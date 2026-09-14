@@ -582,9 +582,11 @@ module EO::Engine
       # @param phase [Symbol] the leader's phase (:hunting, :resting, ...)
       # @param target [#id, #name, #noun, nil] the leader's current target
       # @return [Boolean] true, from the Hub's heartbeat!
-      def publish(world, phase:, target: nil)
+      # @param signs [Boolean] the leader is at the hunting room or hunting
+      #   from it, where signs belong; false for the rest of the cycle
+      def publish(world, phase:, target: nil, signs: true)
         @last_state = {
-          name: @name, room: world.room.id, phase: phase, looter: @looter,
+          name: @name, room: world.room.id, phase: phase, looter: @looter, signs: signs,
           target: target && { id: target.id.to_s, name: target.name.to_s, noun: target.noun.to_s }
         }
         @hub.heartbeat!(@last_state)
@@ -975,6 +977,12 @@ module EO::Engine
       def leader_room = @state[:room]
       # @return [Symbol, nil] the leader's phase from the last known state
       def leader_phase = @state[:phase]
+
+      # A leader published before this flag existed, or a state not yet
+      # fetched, must not silently hold a follower's signs forever. Absent
+      # reads as wanted, the behavior without the gate.
+      # @return [Boolean] the leader is where signs belong
+      def leader_signs_wanted? = @state.fetch(:signs, true) != false
       # @return [Hash, nil] the leader's target (:id, :name, :noun) from the last known state
       def leader_target = @state[:target]
       # @return [String, nil] the assigned looter from the last known state
@@ -1276,6 +1284,11 @@ module EO::Engine
       #
       # @return [Boolean] true while the leader's phase is :resting
       def resting? = @member.leader_phase == :resting
+
+      # What Maintain gates on: the leader is at the hunting room, so
+      # signs are wanted. Held for the refuge and both walks.
+      # @return [Boolean]
+      def signs_wanted? = @member.leader_signs_wanted?
 
       # Pulls this tick's orders from the Hub into the queue.
       #
