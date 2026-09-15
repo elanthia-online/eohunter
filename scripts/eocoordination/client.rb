@@ -8,6 +8,7 @@ require_relative 'bounded_frame'
 
 module EO
   module Coordination
+    # Bounded JSON-over-loopback implementation shared by protocol endpoints.
     module Transport
       # Thin JSON client for the local active sessions service.
       #

@@ -82,6 +82,15 @@ RSpec.describe EO::Coordination::Operations do
     expect(complete).to include(state: 'settled', outcome: 'succeeded', cleanup: 'complete', owner_tick: 3)
   end
 
+  it 'does not infer cleanup completion when the owner omits cleanup evidence' do
+    client.submit(request_id: 'unknown-cleanup', operation: 'hold')
+    grant.next_request(owner_tick: 1)
+
+    receipt = grant.settle(request_id: 'unknown-cleanup', owner_tick: 1, outcome: :succeeded)
+
+    expect(receipt).to include(state: 'settled', outcome: 'succeeded', cleanup: 'unknown')
+  end
+
   it 'returns one retained receipt for lost-response retries and rejects changed arguments' do
     first = client.submit(request_id: 'same-id', operation: 'probe', arguments: { value: 1, note: 'same' })
     duplicate = client.submit(request_id: 'same-id', operation: 'probe', arguments: { note: 'same', value: 1 })

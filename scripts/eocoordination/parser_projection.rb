@@ -9,7 +9,9 @@ module EO
     # cut before parsing; DownstreamHook publishes only after the parser catches
     # up to that exact, newest input. Unknown or buffered provenance stays nil.
     class ParserProjection
+      # Namespace used to make every installed hook name unique.
       HOOK_PREFIX = 'EO::Coordination::ParserProjection'
+      # Parser-provenance hooks run before ordinary presentation consumers.
       HOOK_PRIORITY = 1_000
 
       # @param game [Object] native Game singleton

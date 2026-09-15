@@ -36,9 +36,12 @@ end
 
 module ::EO
   module Coordination
+    # Installed coordination-library API version.
     VERSION = '0.1.0'.freeze unless const_defined?(:VERSION, false)
+    # Oldest consumer API accepted by this release.
     OLDEST_SUPPORTED = '0.1.0'.freeze unless const_defined?(:OLDEST_SUPPORTED, false)
 
+    # Raised when a consumer requests an unsupported library API version.
     class VersionError < StandardError; end unless const_defined?(:VersionError, false)
 
     # Refuse callers built for a newer API or for an API this library dropped.

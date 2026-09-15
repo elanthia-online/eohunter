@@ -11,24 +11,37 @@ module EO
     # the owning thread can take or settle it. This module never sends game
     # commands, starts scripts, or invokes caller callbacks.
     module Operations
+      # Controlled-operation wire protocol version.
       PROTOCOL_VERSION = 1
+      # Maximum encoded request or response size.
       MAX_FRAME_BYTES = 16_384
+      # Maximum receipts retained by a grant unless configured otherwise.
       DEFAULT_CAPACITY = 32
+      # Default receiver-local issuance-to-use validity window.
       DEFAULT_TICKET_SECONDS = 5.0
+      # Default bounded transport deadline.
       DEFAULT_TIMEOUT = 0.25
 
+      # Complete receipt lifecycle states.
       STATES = %w[reserved pending running settled expired revoked].freeze
+      # Truthful logical operation outcomes.
       OUTCOMES = %w[succeeded failed cancelled unknown].freeze
+      # Cleanup states kept separate from logical outcomes.
       CLEANUP = %w[not_required pending complete unknown].freeze
 
       # Validation and canonical-copy helpers shared by the owner and peer.
       # These are deliberately data-only: no executable validators cross the
       # transport seam.
       module Contract
+        # Maximum recursive JSON-compatible value depth.
         MAX_DEPTH = 8
+        # Maximum number of elements in any collection.
         MAX_COLLECTION = 64
+        # Maximum number of bytes in any value string.
         MAX_STRING_BYTES = 2_048
+        # Supported operation-name form.
         NAME = /\A[a-z][a-z0-9_]{0,63}\z/
+        # Supported argument-name form.
         ARGUMENT = /\A[a-z][a-z0-9_]{0,63}\z/
 
         module_function
@@ -66,6 +79,9 @@ module EO
           end
         end
 
+        # Validate and freeze a consumer operation schema.
+        # @param value [Hash] operation names and required/optional arguments
+        # @return [Hash] normalized immutable schema
         def operations(value)
           unless value.is_a?(Hash) && !value.empty? && value.size <= MAX_COLLECTION
             raise ArgumentError, 'operations must be a non-empty bounded hash'
@@ -100,10 +116,16 @@ module EO
             (keys - definition[:required] - definition[:optional]).empty?
         end
 
+        # Return a stable digest for a JSON-compatible value.
+        # @param value [Object] validated JSON-compatible value
+        # @return [String] lowercase SHA-256 digest
         def digest(value)
           Digest::SHA256.hexdigest(JSON.generate(canonical(value)))
         end
 
+        # Return a recursively immutable copy without sharing mutable input.
+        # @param value [Object] validated JSON-compatible value
+        # @return [Object] immutable copy
         def copy(value)
           Coordination::Schema.immutable(value)
         end
@@ -263,7 +285,7 @@ module EO
         # @param cleanup [String, Symbol] not_required, pending, complete or unknown
         # @param reason [String, Symbol, nil]
         # @return [Hash] immutable receipt
-        def settle(request_id:, owner_tick:, outcome:, result: nil, cleanup: :complete, reason: nil)
+        def settle(request_id:, owner_tick:, outcome:, result: nil, cleanup: :unknown, reason: nil)
           assert_owner!
           outcome = outcome.to_s
           cleanup = cleanup.to_s

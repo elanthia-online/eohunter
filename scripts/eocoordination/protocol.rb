@@ -9,9 +9,13 @@ module EO
   # discovery registration occur on require or construction. The owner must
   # publish a completed tick; transport workers only read that frozen copy.
   module Coordination
+    # Read-only observation protocol version.
     PROTOCOL_VERSION = 1
+    # Maximum encoded request or response size.
     MAX_FRAME_BYTES = 16_384
+    # Observation fields understood by this protocol revision.
     FIELDS = %w[room readiness].freeze
+    # Complete identity fields pinned by publishers and consumers.
     IDENTITY_KEYS = %i[game character incarnation connection_generation run_id].freeze
 
     # Strict projection schema shared by owner admission and peer validation.
@@ -116,6 +120,7 @@ module EO
       end
     end
 
+    # Owner-side read-only observation endpoint for one exact native session.
     class Session
       # Identity and explicit read credential are separate from native discovery
       # credentials. Callers exchange this token outside the public descriptor.
