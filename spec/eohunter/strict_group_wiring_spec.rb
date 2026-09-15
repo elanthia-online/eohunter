@@ -125,6 +125,92 @@ RSpec.describe 'strict movement entrypoint wiring' do
       .to raise_error(RuntimeError, 'member unavailable')
   end
 
+  describe 'ownership after group admission' do
+    let(:group) do
+      double('admitted group', strict_movement?: true, stop_pulse!: nil,
+                              native_reader: @projection, finish!: nil, keep_alive!: nil)
+    end
+    let(:profile) { EO::Engine::Profile.new({ 'group_strict_movement' => true }) }
+    let(:behaviors) { { area: double(too_big?: false), rest: double, engage: double } }
+    let(:engine) { double('engine', on_tick: nil, stop!: nil, stop_reason: nil) }
+
+    before do
+      stub_const('EOHunter', adapter)
+      allow(adapter).to receive_messages(
+        lead: group, follow: group, build: behaviors, build_follower: behaviors,
+        report: nil, wire: nil, wire_movement: nil
+      )
+      allow(EO::Engine::Engine).to receive(:new).and_return(engine)
+      allow(EO::Engine::Watch).to receive(:install!).and_raise('watch failed')
+      allow(EO::Engine::Watch).to receive(:uninstall!)
+      allow(DRb).to receive(:stop_service)
+      @cleanup = []
+    end
+
+    def start_entrypoint(mode, dry: false)
+      source = File.read(File.expand_path('../../scripts/eohunter.lic', __dir__))
+      startup = source[source.index("\nif mode == 'tail'\n")..]
+      cleanup = @cleanup
+      host = Object.new
+      host.define_singleton_method(:before_dying) { |&block| cleanup << block }
+      context = host.instance_eval { binding }
+      { mode: mode, mode_args: ['Peer'], dry: dry, profile: profile, world: FakeWorld.new,
+        controlled: nil, trial: nil, tracking: EO::Engine::Tracking.policy_from([]),
+        bounty_mode: false }.each { |key, value| context.local_variable_set(key, value) }
+      eval(startup, context)
+    end
+
+    %w[head tail].each do |mode|
+      it "closes admitted #{mode} resources when behavior construction fails" do
+        allow(adapter).to receive(mode == 'head' ? :build : :build_follower).and_raise('build failed')
+        expect { start_entrypoint(mode) }.to raise_error(RuntimeError, 'build failed')
+
+        expect(@cleanup.size).to eq(1)
+        expect(@projection).to receive(:close)
+        expect(DRb).to receive(:stop_service)
+        @cleanup.each(&:call)
+      end
+
+      it "closes admitted #{mode} resources when watch installation fails" do
+        expect { start_entrypoint(mode) }.to raise_error(RuntimeError, 'watch failed')
+
+        expect(@cleanup.size).to eq(1)
+        expect(engine).to receive(:stop!).with(:script_killed)
+        expect(@projection).to receive(:close)
+        expect(DRb).to receive(:stop_service)
+        @cleanup.each(&:call)
+      end
+
+      %i[stop! stop_pulse!].each do |operation|
+        it "closes admitted #{mode} resources even when #{operation} cleanup raises" do
+          expect { start_entrypoint(mode) }.to raise_error(RuntimeError, 'watch failed')
+          target = operation == :stop! ? engine : group
+          allow(target).to receive(operation).and_raise('cleanup interrupted')
+
+          expect(@projection).to receive(:close)
+          expect(DRb).to receive(:stop_service)
+          expect { @cleanup.each(&:call) }.to raise_error(RuntimeError, 'cleanup interrupted')
+        end
+      end
+    end
+
+    it 'closes the admitted leader when area validation exits before engine construction' do
+      allow(behaviors[:area]).to receive(:too_big?).and_return(true)
+      expect { start_entrypoint('head') }.to raise_error(SystemExit)
+
+      expect(@cleanup.size).to eq(1)
+      expect(@projection).to receive(:close)
+      expect(DRb).to receive(:stop_service)
+      @cleanup.each(&:call)
+    end
+
+    it 'keeps dry inspection free of group acquisition and cleanup callbacks' do
+      expect(adapter).not_to receive(:lead)
+      expect { start_entrypoint('head', dry: true) }.to raise_error(SystemExit)
+      expect(@cleanup).to be_empty
+    end
+  end
+
   it 'captures locally at completion and publishes only on the next start hook' do
     engine = EO::Engine::Engine.new(world: FakeWorld.new, behaviors: [])
     orders = double('orders')

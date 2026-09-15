@@ -804,6 +804,28 @@ profile.validate_rest_mode!(mode, controlled: !controlled.nil?, bounty: bounty_m
 if mode == 'tail'
   exit if dry
   member = EOHunter.follow(mode_args, strict_movement: profile['group_strict_movement'])
+  engine = nil
+  before_dying do
+    begin
+      engine&.stop!(:script_killed)
+    ensure
+      begin
+        member.stop_pulse!
+      ensure
+        begin
+          # The follower's service must close even if later startup fails.
+          DRb.stop_service
+        ensure
+          begin
+            member.native_reader.close if member.native_reader.respond_to?(:close)
+          ensure
+            EO::Engine::Watch.uninstall!
+            EO::Engine::Events.reset!
+          end
+        end
+      end
+    end
+  end
   behaviors = EOHunter.build_follower(profile, world, member)
   engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :loadout, :maintain, :engage, :wander))
   EOHunter.wire(engine, behaviors)
@@ -826,27 +848,47 @@ if mode == 'tail'
   member.keep_alive!
   # the watch, from the running script (Lich removes a dead script's hooks)
   EO::Engine::Watch.install!
-  before_dying do
-    engine.stop!(:script_killed)
-    begin
-      member.stop_pulse!
-      # the follower's own service, started at the join above
-      DRb.stop_service
-    ensure
-      begin
-        member.native_reader.close if member.native_reader.respond_to?(:close)
-      ensure
-        EO::Engine::Watch.uninstall!
-        EO::Engine::Events.reset!
-      end
-    end
-  end
   engine.run
   member.stop_pulse!
   exit
 end
 
 leader = mode == 'head' && !dry ? EOHunter.lead(profile, world, mode_args) : nil
+engine = nil
+unless dry
+  before_dying do
+    # Register before building behaviors: rejected startup still owns the
+    # leader's listener and parser projection. Native Script owns teardown.
+    # Its workers are already dead here, so acknowledged shutdown belongs
+    # in the normal run path while followers can still answer.
+    begin
+      engine&.stop!(:script_killed)
+    ensure
+      begin
+        leader&.stop_pulse!
+      ensure
+        begin
+          leader&.finish!(engine&.stop_reason || :script_killed)
+        ensure
+          begin
+            # DRb.start_service replaces the primary without closing its listener.
+            DRb.stop_service if leader
+            fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot
+          ensure
+            reader = leader&.native_reader
+            begin
+              reader.close if reader.respond_to?(:close)
+            ensure
+              EO::Engine::Watch.uninstall!
+              EO::Engine::Events.reset!
+              EO::Engine::Actions::Base.interrupt = nil
+            end
+          end
+        end
+      end
+    end
+  end
+end
 owner = Script.current
 if controlled
   token = "#{Process.pid}:#{owner.object_id}:#{Process.clock_gettime(Process::CLOCK_MONOTONIC)}"
@@ -924,39 +966,6 @@ end
 # The watch subscribes to Lich's parser seam from the running script,
 # since Lich removes a dead script's subscriptions and hooks.
 EO::Engine::Watch.install!
-before_dying do
-  # Teardown only. Lich kills the script's worker threads - the DRb server
-  # among them - before it runs these procs (script.rb 2173, then 2191),
-  # so a bounded wait for follower acks here can never collect one: it
-  # spent the full deadline and reported every follower unacked, on a
-  # plain ;kill as much as on a real stop. The acknowledged shutdown runs
-  # from the run path below, while the threads are still alive.
-  engine.stop!(:script_killed)
-  leader&.stop_pulse!
-  # The fallible steps last, each isolated: Lich rescues per proc but not
-  # Interrupt, so a raise or an interrupted sleep here used to skip the
-  # watch teardown and leave tracker handlers building a World per combat
-  # line until the next eohunter start evicted them by name.
-  begin
-    leader&.finish!(engine.stop_reason || :script_killed)
-    # The listening socket outlives the script: DRb.start_service replaces
-    # the primary without closing the old server, so a restart in the same
-    # Lich leaves the previous run's Hub still answering hunt_id, register
-    # and report from a dead roster. stop_service closes the current one.
-    DRb.stop_service if leader
-    fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot
-  ensure
-    reader = leader&.native_reader
-    begin
-      reader.close if reader.respond_to?(:close)
-    ensure
-      EO::Engine::Watch.uninstall!
-      EO::Engine::Events.reset!
-      # the lambda closes over this run's engine; a restart sets its own
-      EO::Engine::Actions::Base.interrupt = nil
-    end
-  end
-end
 
 if controlled
   EOHunter.run_controlled(engine: engine, behaviors: behaviors, world: world, owner: owner,
