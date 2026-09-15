@@ -1,13 +1,13 @@
 # Coordination hold/release pilot
 
-Status: draft Adapter; predecessor live smoke passed, coordination-library rewrite
-has offline coverage and still requires its own safe-room live smoke.
+Status: draft adapter; predecessor and coordination-library safe-room live smokes
+passed, with offline contract coverage retained.
 Normal Hunter installation and profiles are unchanged.
 Updated 2026-09-14 after the generic coordination library was built.
 
 This is an EOHunter-only follow-up to [#110](https://github.com/elanthia-online/eohunter/pull/110).
 It shares that proposal's small completed-tick hook, but does not include or
-require its read-only Adapter. Whichever lands second should reconcile the
+require its read-only adapter. Whichever lands second should reconcile the
 shared hook rather than duplicate it. It requires the generic
 [`libeocoordination` library](https://github.com/elanthia-online/eohunter/pull/115).
 The library owns bounded transport, pair identity, tickets, replay protection,
@@ -57,18 +57,18 @@ integration needs a separate policy review, not removal of this check as setup.
 - Expired tickets cannot first execute. Late duplicates can read their existing
   result but cannot execute again. Conflicting reuse of an ID is refused.
 - The coordination library keeps a bounded receipt table and never evicts replay
-  protection during a grant. At capacity start a new explicitly granted Adapter,
+  protection during a grant. At capacity start a new explicitly granted adapter,
   with a new run identity and token.
 
 The receiver-issued ticket bounds issuance-to-use, NOT the age of a human's
 original intent. Authentication does not supply freshness or idempotency.
 
-This local hold window is not the generalized resource-lease Interface proposed
+This local hold window is not the generalized resource-lease interface proposed
 after pressure-testing the coordination contract with a production DR consumer.
 It neither arbitrates a contended resource nor transfers ownership. Expiry stops
 the empty engine and begins truthful cleanup; it never resumes autonomous work.
 Future resource leases need their own acquire/renew/release/reclaim lifecycle,
-atomic storage Adapter and fencing generation. EOHunter remains only a consumer
+atomic storage adapter and fencing generation. EOHunter remains only a consumer
 of that contract and must not embed transport or allocation policy.
 
 ## Owner and failure rules
@@ -134,11 +134,11 @@ coordination library.
 
 ## Test evidence (2026-09-13)
 
-- Coordination-library Adapter: 954 examples, zero failures in the current
+- Coordination-library adapter: 954 examples, zero failures in the current
   integrated run (seed 8119); focused policy cases include an actual forked peer
   talking over the bounded loopback endpoint.
 - The refactor removes EOHunter's duplicate transport, ticket, replay and receipt
-  Implementation: 215 inserted lines against 350 removed across code and specs.
+  implementation: 215 inserted lines against 350 removed across code and specs.
 - Scoped Rubocop reports no offenses. Single-file build and Ruby compilation pass.
 - The exact private live-smoke script also runs in two independent Ruby
   processes against fake Worlds. All nine checks pass, with no game commands
@@ -167,5 +167,5 @@ The private character-specific launcher and raw game logs are not distributed.
 The predecessor live checks covered
 identity, hold/release, duplicate delivery, preserving a local manual pause,
 and teardown; expiry/reconnect/failure cases were tested offline. Because this
-revision replaces that transport Implementation with the external library Interface,
-it still needs a short safe-room live smoke before merge.
+revision replaces that transport implementation with the external library interface,
+the successful safe-room live smoke above verifies that integrated path.

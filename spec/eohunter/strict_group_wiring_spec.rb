@@ -78,6 +78,13 @@ RSpec.describe 'strict movement entrypoint wiring' do
     expect(reader.call).to equal(native_state)
   end
 
+  it 'closes a parser projection whose installation fails' do
+    allow(@projection).to receive(:install!).and_raise('hook unavailable')
+    expect(@projection).to receive(:close)
+
+    expect { adapter.group_native_reader }.to raise_error(RuntimeError, 'hook unavailable')
+  end
+
   it 'rejects count-only and LAN strict leaders before sending group commands' do
     profile = EO::Engine::Profile.new({ 'group_strict_movement' => true })
     expect(EO::Engine::Actions::GroupOpen).not_to receive(:new)
@@ -90,6 +97,32 @@ RSpec.describe 'strict movement entrypoint wiring' do
     expect(DRb).not_to receive(:start_service)
     expect { adapter.follow(['druby://192.0.2.1:1234'], strict_movement: true) }
       .to raise_error(ArgumentError, /loopback/)
+  end
+
+  it 'releases the projection and local service when strict leader construction fails' do
+    profile = EO::Engine::Profile.new({ 'group_strict_movement' => true })
+    world = FakeWorld.new
+    hub = double('hub', open_hunt: true, ready?: true, activate!: true, members: ['Peer'])
+    allow(EO::Engine::Actions::GroupOpen).to receive(:new).and_return(double(call: true))
+    allow(EO::Engine::Group::Hub).to receive(:new).and_return(hub)
+    allow(DRb).to receive(:start_service)
+    allow(DRb).to receive(:uri).and_return('druby://127.0.0.1:1234')
+    allow(EO::Engine::Group::Leader).to receive(:new).and_raise('leader unavailable')
+    expect(@projection).to receive(:close)
+    expect(DRb).to receive(:stop_service)
+
+    expect { adapter.lead(profile, world, ['Peer']) }.to raise_error(RuntimeError, 'leader unavailable')
+  end
+
+  it 'releases the projection and local service when strict follower construction fails' do
+    allow(DRb).to receive(:start_service)
+    allow(DRbObject).to receive(:new_with_uri).and_return(double('hub'))
+    allow(EO::Engine::Group::Member).to receive(:new).and_raise('member unavailable')
+    expect(@projection).to receive(:close)
+    expect(DRb).to receive(:stop_service)
+
+    expect { adapter.follow(['druby://127.0.0.1:1234'], strict_movement: true) }
+      .to raise_error(RuntimeError, 'member unavailable')
   end
 
   it 'captures locally at completion and publishes only on the next start hook' do

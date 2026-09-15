@@ -3,12 +3,16 @@
 module EO::Engine
   # Opt-in coordination adapters; loading them never starts a listener.
   module Coordination
+    # Independently distributed coordination-library API required by adapters.
+    LIBRARY_VERSION = '0.1.0'.freeze
+
     # Safe-room hold/release policy over libeocoordination's generic operations
     # interface. The library owns delivery, identity, replay and receipts; this
     # adapter alone decides when EOHunter may pause or resume.
     class HoldPilot
       # Fixed hold lifetime; expiry stops the pilot rather than resuming work.
       HOLD_SECONDS = 15.0
+      # Exact operations and argument shapes this adapter grants its peer.
       OPERATIONS = {
         'hold'    => { required: [], optional: [] },
         'release' => { required: ['hold_id'], optional: [] }
@@ -87,12 +91,16 @@ module EO::Engine
       private
 
       def native_operations
-        Script.loadlib('libeocoordination') unless defined?(::EO::Coordination::Operations::Grant)
-        return ::EO::Coordination::Operations if defined?(::EO::Coordination::Operations::Grant)
+        available = defined?(::EO::Coordination::Operations::Grant) && ::EO::Coordination.respond_to?(:require_version)
+        Script.loadlib('libeocoordination') unless available
+        if defined?(::EO::Coordination::Operations::Grant)
+          ::EO::Coordination.require_version(LIBRARY_VERSION)
+          return ::EO::Coordination::Operations
+        end
 
         raise ArgumentError, 'load libeocoordination first'
       rescue StandardError => e
-        raise ArgumentError, "load libeocoordination first: #{e.message}"
+        raise ArgumentError, "load compatible libeocoordination #{LIBRARY_VERSION}: #{e.message}"
       end
 
       # The start callback only rechecks local policy and applies work already

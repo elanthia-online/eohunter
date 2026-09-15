@@ -10,6 +10,10 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
     require File.join(File.expand_path(root), 'eocoordination/protocol')
   end
 
+  before do
+    allow(EO::Coordination).to receive(:require_version).and_return(true)
+  end
+
   let(:world) { FakeWorld.new }
   let(:engine) { EO::Engine::Engine.new(world: world, behaviors: [], interval: 0) }
   let(:now) { [100.0] }
@@ -56,6 +60,12 @@ RSpec.describe EO::Engine::Coordination::HoldPilot do
     pilot.close
     expect(world.sent_commands).to be_empty
     EO::Engine::Events.reset!
+  end
+
+  it 'requires the coordination-library API version when constructed' do
+    expect(EO::Coordination).to receive(:require_version)
+      .with(EO::Engine::Coordination::LIBRARY_VERSION).and_return(true)
+    pilot
   end
 
   it 'is inert before start, even if constructed outside its declared room' do

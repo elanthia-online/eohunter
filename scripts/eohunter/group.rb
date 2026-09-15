@@ -916,6 +916,8 @@ module EO::Engine
       # @param target [#id, #name, #noun, nil] the leader's current target
       # @return [Boolean] true, from the Hub's heartbeat!
       def publish(world, phase:, target: nil)
+        return false if strict_movement? && !current_identity
+
         @last_state = {
           name: @name, room: world.room.id, phase: phase, looter: @looter,
           target: target && { id: target.id.to_s, name: target.name.to_s, noun: target.noun.to_s }
@@ -937,6 +939,8 @@ module EO::Engine
           loop do
             sleep interval
             begin
+              next if strict_movement? && !current_identity
+
               @hub.heartbeat!(@last_state) if @last_state
             rescue StandardError
               nil # one bad beat must not end the pulse: the thread dies
@@ -1349,6 +1353,8 @@ module EO::Engine
       # @param report [Report] this tick's report
       # @return [Boolean] true when the Hub answered
       def report(report)
+        return false if strict_movement? && !strict_identity_current?
+
         @last_report = report
         state = remote(false) { @hub.report(@name, report) }
         return false unless state
@@ -1371,6 +1377,7 @@ module EO::Engine
             sleep interval
             begin
               next unless @last_report
+              next if strict_movement? && !strict_identity_current?
 
               again = @last_report.dup
               again.at = nil

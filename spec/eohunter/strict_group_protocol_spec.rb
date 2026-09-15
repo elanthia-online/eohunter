@@ -185,6 +185,18 @@ RSpec.describe 'Strict group movement protocol' do
     expect(leader.movement_pending?).to be false
   end
 
+  it 'withdraws leader and follower liveness after either exact identity changes' do
+    expect(leader.publish(world, phase: :hunting)).to be true
+    expect(member.report(EO::Engine::Group::Report.new(name: 'Bob', room: 1, rt: false))).to be true
+
+    leader_identity[0] = leader_identity.first.merge(connection_generation: 2)
+    member_identity[0] = member_identity.first.merge(connection_generation: 8)
+
+    expect(leader.publish(world, phase: :hunting)).to be false
+    expect(member.report(EO::Engine::Group::Report.new(name: 'Bob', room: 1, rt: false))).to be false
+    expect(member.lost?).to be true
+  end
+
   it 'copies participant identities before a caller can mutate them' do
     member_identity.first[:run] = 'different'
     expect(acknowledge(prepare)).to be false
