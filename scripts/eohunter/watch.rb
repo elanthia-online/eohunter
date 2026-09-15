@@ -44,7 +44,8 @@ module EO::Engine
 
     @rules = []
     @mutex = Mutex.new
-    @handlers = []
+    @subscription_mutex = Mutex.new
+    @handlers = {}
 
     class << self
       # A rule of the script's own (the profile's flee_message).
@@ -165,41 +166,70 @@ module EO::Engine
         end
       end
 
-      # Subscribe to Lich's facts (the tracker on, attack events emitted)
-      # and, when the script has rules of its own, a hook for those.
+      # Subscribe to Lich's facts (the tracker on, attack events emitted),
+      # refresh message subscriptions when definitions reload, and install
+      # a hook when the script has rules of its own.
       #
       # @param name [String] the DownstreamHook name for the rules hook
       # @return [void]
       def install!(name: HOOK_NAME)
-        tracker = ::Lich::Gemstone::Combat::Tracker
-        tracker.enable! unless tracker.enabled?
-        tracker.configure(emit_attacks: true) unless tracker.settings[:emit_attacks]
-        @handlers = [
-          tracker.on(*::Lich::Gemstone::Combat::Messages.events, name: "#{NAME}:messages") { |type, data| message(type, data) },
-          tracker.on(:ucs, name: "#{NAME}:ucs") { |_type, data| ucs(data) },
-          tracker.on(:attack, name: "#{NAME}:attack") { |_type, data| attack(data) }
-        ]
-        return if rules.empty?
+        @subscription_mutex.synchronize do
+          tracker = ::Lich::Gemstone::Combat::Tracker
+          tracker.enable! unless tracker.enabled?
+          tracker.configure(emit_attacks: true) unless tracker.settings[:emit_attacks]
+          @handlers.each_value { |h| tracker.off(h) }
+          handlers = @handlers = {}
+          handlers[:reload] = tracker.on(:definitions_reloaded, name: "#{NAME}:definitions_reloaded") do |_type, _data|
+            refresh_messages(tracker, handlers)
+          end
+          subscribe_messages(tracker, handlers)
+          handlers[:ucs] = tracker.on(:ucs, name: "#{NAME}:ucs") { |_type, data| ucs(data) }
+          handlers[:attack] = tracker.on(:attack, name: "#{NAME}:attack") { |_type, data| attack(data) }
+          ::DownstreamHook.remove(@installed) if @installed
+          @installed = nil
+          return if rules.empty?
 
-        ::DownstreamHook.add(name, hook_proc, persist: false)
-        @installed = name
+          ::DownstreamHook.add(name, hook_proc, persist: false)
+          @installed = name
+        end
       end
 
       # Drop the tracker handlers and the rules hook, if one was installed.
       #
       # @return [void]
       def uninstall!
-        tracker = ::Lich::Gemstone::Combat::Tracker
-        @handlers.each { |h| tracker.off(h) }
-        @handlers = []
-        ::DownstreamHook.remove(@installed) if @installed
-        @installed = nil
+        @subscription_mutex.synchronize do
+          tracker = ::Lich::Gemstone::Combat::Tracker
+          @handlers.each_value { |h| tracker.off(h) }
+          @handlers = {}
+          ::DownstreamHook.remove(@installed) if @installed
+          @installed = nil
+        end
       end
 
       # @return [Boolean] true while tracker handlers are registered
-      def installed? = @handlers.any?
+      def installed? = @subscription_mutex.synchronize { @handlers.any? }
 
       private
+
+      # Observers.emit snapshots callbacks before calling them; an old
+      # reload callback must not recreate handlers after uninstall/reinstall.
+      def refresh_messages(tracker, handlers)
+        @subscription_mutex.synchronize do
+          subscribe_messages(tracker, handlers) if @handlers.equal?(handlers)
+        end
+      end
+
+      # Messages.events is authoritative; reload payloads need not list names.
+      # Observers.on replaces the named handler across all its old event lists.
+      def subscribe_messages(tracker, handlers)
+        events = ::Lich::Gemstone::Combat::Messages.events
+        if events.empty?
+          tracker.off(handlers.delete(:messages)) if handlers[:messages]
+        else
+          handlers[:messages] = tracker.on(*events, name: "#{NAME}:messages") { |type, data| message(type, data) }
+        end
+      end
 
       # The disarm's moment (ecleanse set_hooks: the hands and the room).
       def disarm_data
