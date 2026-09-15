@@ -9,12 +9,16 @@ permissions:
 
 jobs:
   native-guard:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      # Pin lich-5 #1575, independently of the read-only coordination #1613
-      # dependency inherited through Hunter #111. No installed local build.
+      # Pin lich-5 #1575, independently of the optional coordination library
+      # inherited through Hunter #111. No installed local build.
       - uses: actions/checkout@v4
         with:
           repository: elanthia-online/lich-5
