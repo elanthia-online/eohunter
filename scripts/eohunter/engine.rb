@@ -67,6 +67,7 @@ module ::EO
       group
       runner
       coordination_hold
+      coordination
       controller
     ].freeze
 
