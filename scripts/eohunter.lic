@@ -146,6 +146,7 @@ module EOHunter
     member = behaviors[:member]
     follower_return_prepped = false
     loadout_stranded = false
+    preparation_failure = nil
     # Every wait inside an action checks this, and nothing ever set it, so
     # stop! could not shorten an fput or a roundtime wait already in
     # flight and every interrupted? guard in the engine was inert.
@@ -157,6 +158,22 @@ module EOHunter
     E::Events.error_reporter = ->(type, error) { msg('error', "handler for #{type} raised #{error.class}: #{error.message}") }
     E::Events.on(:engine_started) { |e| msg('info', "hunting: #{e.data[:behaviors].join(', ')}") }
     E::Events.on(:engine_stopped) { |e| msg('warn', "stopped: #{e.data[:reason]}") }
+    E::Events.on(:preparation_failed) do |e|
+      preparation_failure ||= "preparation #{e.data[:name]}: #{e.data[:status]} (#{e.data[:reason]}); inspect before restarting"
+      msg('error', preparation_failure)
+      rest.preparation_failed!(preparation_failure)
+    end
+    E::Events.on(:rest_stranded) do
+      engine.stop!(:preparation_return_failed) if preparation_failure
+    end
+    engine.on_tick do |world|
+      next unless preparation_failure
+      next if E::Travel.active&.underway?
+
+      if rest_policy&.resting_room && world.room.id.to_s == rest_policy.resting_room.to_s
+        engine.stop!(:preparation_failed)
+      end
+    end
     E::Events.on(:engine_error) { |e| msg('error', "#{e.data[:error]}: #{e.data[:message]}\n  #{Array(e.data[:backtrace]).join("\n  ")}") }
     E::Events.on(:watchdog_tripped) do |e|
       because = e.data[:reason] ? ": #{e.data[:reason]}" : ''
@@ -318,14 +335,15 @@ module EOHunter
     flee = E::Behaviors::Flee.new(policy: flee_policy, targets_policy: targets_policy, walker: walker,
                                   group_nouns: -> { world.group_nouns },
                                   wander_stance: wander_policy.wander_stance)
-    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state, buffs: buffs)
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state, buffs: buffs,
+                                          signs_wanted: -> { rest.signs_phase? })
     rest.restore_buffs = maintain.method(:restore_buff) if buffs
     engage_policy = profile.engage_policy
     engage_policy.priority = false if tracking.bandits?
     engage = E::Behaviors::Engage.new(policy: engage_policy, targets_policy: targets_policy, wander_policy: wander_policy,
                                       mstrike_policy: profile.mstrike_policy, state: engage_state,
                                       maintain_state: maintain_state, group: leader,
-                                      fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) },
+                                      fried: -> { E::Rest::Predicates.fried?(world.me, rest_policy) }, area: area,
                                       routine_selector: trial && trial.method(:select))
     loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
                                         owner: engage, resting: -> { rest.resting? })
@@ -472,7 +490,8 @@ module EOHunter
     flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker,
                                   group_nouns: -> { world.group_nouns },
                                   wander_stance: wander_policy.wander_stance)
-    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state)
+    maintain = E::Behaviors::Maintain.new(policy: profile.maintain_policy, state: maintain_state,
+                                          signs_wanted: -> { orders.signs_wanted? })
     assist.on_fight { flee.engaged! }
     { survival: survival, cleanse: cleanse, flee: flee, rest: orders, loot: loot, loadout: loadout,
       maintain: maintain, engage: assist, wander: follow,
@@ -787,7 +806,13 @@ rest = behaviors[:rest]
 engage = behaviors[:engage]
 if leader
   EOHunter.wire_movement(engine, leader: leader) if leader.strict_movement?
-  engine.on_tick { |w| leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target) }
+  engine.on_tick do |w|
+    # :resting stays the whole non-hunting leg, which is what the followers'
+    # Survival and Loadout gate on. signs says the narrower thing - at the
+    # hunting room, where signs belong - so a follower holds its signs for
+    # the refuge and both walks and casts them on arrival.
+    leader.publish(w, phase: rest.resting? ? :resting : :hunting, target: engage.target, signs: rest.signs_phase?)
+  end
   # the heartbeat again between ticks, so a blocking action never reads as a dead leader
   leader.keep_alive!
 end

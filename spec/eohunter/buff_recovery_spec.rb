@@ -140,3 +140,41 @@ RSpec.describe 'Combat buff recovery through Rest' do
     expect { traveling.tick(world) }.not_to change(traveling, :phase)
   end
 end
+
+RSpec.describe EO::Engine::Behaviors::Rest, '#signs_phase?' do
+  let(:profile) { EO::Engine::Profile.new({ 'resting_room_id' => 100, 'hunting_room_id' => 200 }) }
+  let(:rest) { described_class.new(policy: profile.rest_policy, scripts: double('Scripts', start: true, running?: false)) }
+
+  after { EO::Engine::Events.reset!; EO::Engine::Travel.reset! }
+
+  def phase!(name) = rest.instance_variable_set(:@phase, name)
+
+  it 'wants signs at the hunting room and while hunting' do
+    %i[arrived done hunting].each do |phase|
+      phase!(phase)
+      expect(rest.signs_phase?).to be(true), "expected #{phase} to want signs"
+    end
+  end
+
+  it 'holds signs at the refuge, on the way home and on the way back out' do
+    %i[resting_prep resting_prep_own rested resting leave waypoints resting_room
+       hunting_prep hunting_prep_own rally_out rally hunting_scripts hunting_room].each do |phase|
+      phase!(phase)
+      expect(rest.signs_phase?).to be(false), "expected #{phase} to hold signs"
+    end
+  end
+
+  it 'holds signs through the rally hold, and wants them in the hunting room hold' do
+    phase!(:hold)
+    rest.instance_variable_set(:@hold, { why: :before_rally })
+    expect(rest.signs_phase?).to be false
+
+    rest.instance_variable_set(:@hold, { why: :at_hunting_room })
+    expect(rest.signs_phase?).to be true
+  end
+
+  it 'starts a first hunt holding signs, so town prep no longer casts them' do
+    rest.start!
+    expect(rest.signs_phase?).to be false
+  end
+end

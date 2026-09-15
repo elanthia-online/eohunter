@@ -73,13 +73,15 @@ An action is a class with `preconditions` (a reason or `:ok`) and
 `perform`. `call` runs the preconditions, settles roundtime, performs,
 and returns a `Result` with a status (`:success`, `:failed`, `:timeout`,
 `:skipped`), a reason, and the game line that decided it. Sending goes
-through three helpers:
+through the shared ladder and three confirmation helpers:
 
 - `send_through_ladder`: Lich's bounded `fput`, which resends on the
   game's transient refusals (roundtime, stun, webbed) and reports the
   permanent ones as failures;
 - `send_and_match`: send once and wait for one of the given answers;
-- `send_and_observe`: send and wait for an event from the watch.
+- `send_and_observe`: send and poll World for a durable state change;
+- `send_and_await`: arm a named-event subscription, send, and await its
+  correlated response with a monotonic deadline and interrupt/death checks.
 
 Nothing sends a command and hopes. A refused command is a failed action
 with the refusal as its reason, and the caller decides what that means.
@@ -116,6 +118,17 @@ once, from the running script, and turns their facts into engine
 events: an incoming swing, an ally's attack, a disarm, a hive trap, an
 arriving ambusher, the endroll of our own attack. Behaviors and actions
 subscribe to what they need and unsubscribe when done.
+`Events.arm` retains the first matching event until its handle is waited on
+or cancelled; the existing `Events.await` combines those steps. Reset cancels
+outstanding handles. Arming excludes pre-arm bus emissions, but a scanner
+can deliver an older queued line later, so event payload correlation remains
+necessary and does not itself prove that this command caused the event.
+
+When Lich emits `definitions_reloaded`, Watch reads the current
+`Combat::Messages.events` and replaces its named message subscription.
+Added names become available immediately and removed names stop being
+forwarded; the reload payload is not an event-name registry. Uninstall
+removes the current handlers, including the reload listener.
 
 ## Travel
 
