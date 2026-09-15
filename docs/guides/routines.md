@@ -1,5 +1,17 @@
 # The routine language
 
+`prepare NAME` invokes a named, event-confirmed profile preparation without a
+stance change. For example, `prepare crystal(once)` runs once per target and
+`prepare crystal(room)` uses the existing room modifier. Definitions and failure
+recovery are documented in [Profiles](profiles.md#resting). Unsent action gates
+keep this line pending; denied or unconfirmed required preparations end the hunt
+through the existing return lifecycle. The named action is also used by prep/rest
+lists. Numeric game commands such as `prepare 101` remain ordinary commands.
+
+Use modifiers directly on the word. The `force`, `eachtarget` and spell prefixes
+cannot wrap a named preparation: they can perform additional sends or repeat a
+consumptive command within the same tick. Such combinations refuse profile loading.
+
 A routine is a list of lines in `hunting_commands` (routine `a`) or
 `hunting_commands_b` through `_j`. Engage runs one line per tick, in
 order, wrapping around, on the current target. Each line is a word
