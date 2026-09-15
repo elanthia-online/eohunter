@@ -331,6 +331,7 @@ module EOHunter
     engage_state = E::Engage::State.new
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
+    E::Travel.listen!
     travel = scripts && ->(room) { E::Travel::Trip.new(room, scripts: scripts) }
     loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy,
                                   counters: counters, group: leader, scripts: scripts)

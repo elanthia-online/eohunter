@@ -68,6 +68,7 @@ module EO::Engine
         @attempts = 0
         @started = false
         @status = :pending
+        @blocked_cause = nil
       end
 
       # Arrived, failed or cancelled: nothing more to tick.
@@ -92,6 +93,17 @@ module EO::Engine
           @status = :arrived
           Travel.release(self)
           Events.emit(:travel_arrived, place: @place, attempts: @attempts)
+          return finished
+        end
+
+        if @started && (blocked = Travel.blocked_status) && terminal?(blocked)
+          stop_script
+          @started = false
+          @status = :failed
+          @blocked_cause = blocked.cause
+          Travel.release(self)
+          Events.emit(:travel_blocked, place: @place, cause: blocked.cause,
+                                       reason: blocked.reason, command: blocked.command)
           return finished
         end
 
@@ -148,7 +160,23 @@ module EO::Engine
         Travel.release(self)
       end
 
+      # Why go2 gave up, when it told us: a cause symbol from
+      # Lich::Common::Move (:injured, :encumbered, ...), else nil. Read it
+      # after a :could_not_reach to know whether walking again is futile.
+      #
+      # @return [Symbol, nil]
+      attr_reader :blocked_cause
+
       private
+
+      # A blocked status this trip should end on rather than wait out.
+      # Travel.claim clears the board when a run starts, so what is here
+      # was reported by this trip's own go2.
+      def terminal?(status)
+        return false unless status.respond_to?(:cause)
+
+        TERMINAL_CAUSES.include?(status.cause)
+      end
 
       def stop_script
         @scripts.kill(SCRIPT) if @started && @scripts.running?(SCRIPT)
@@ -257,6 +285,10 @@ module EO::Engine
     # @return [Trip] the new active trip
     def self.claim(trip)
       @active.suspend! if @active && !@active.equal?(trip) && @active.respond_to?(:suspend!)
+      # A block belongs to the go2 run that reported it. Starting a new
+      # run clears it, so a fresh trip is never ended by the last one's
+      # blocker before its own go2 has said anything.
+      @blocked_status = nil
       @active = trip
     end
 
@@ -269,9 +301,65 @@ module EO::Engine
       @active = nil if @active.equal?(trip)
     end
 
+    # --- go2's own account of the trip -------------------------------------
+
+    # Causes that no amount of walking fixes: go2 will keep restarting and
+    # never move, so the trip ends now and the behavior ladder takes over.
+    # Rest (20) outranks Wander (60) and already owns wounded and
+    # encumbered, including the profile's healing; Survival (0) owns the
+    # room being dangerous. A Trip that heals would be a second copy of
+    # both, so it does neither: it reports why and gets out of the way.
+    TERMINAL_CAUSES = %i[injured encumbered].freeze
+
+    # Causes go2 clears on its own: a roundtime ends, a door opens, a
+    # muckle wears off. Staying underway is right for these.
+    TRANSIENT_CAUSES = %i[roundtime closed muckled].freeze
+
+    # The blocked status go2 last reported, or nil when it is walking.
+    #
+    # @return [Object, nil] go2's frozen Status snapshot
+    def self.blocked_status = @blocked_status
+
+    # Subscribe to go2's status board, once per process. Every change
+    # arrives as +:go2_status+ on the engine bus for the logger, and a
+    # blocked phase is kept for the active Trip to read on its next tick.
+    #
+    # Events-only by choice: on a Lich without the primitive nothing
+    # subscribes and a Trip behaves exactly as it did before, blind but
+    # working. Delivery is on go2's thread, so this does the least
+    # possible work here and lets the trip act on its own tick.
+    #
+    # @return [Boolean] whether a subscription was made
+    def self.listen!
+      return false if @listening
+      return false unless defined?(::Lich::Common::Events)
+
+      ::Lich::Common::Events.on('go2.status', name: 'eohunter') do |_topic, status|
+        note_status(status)
+      end
+      @listening = true
+    rescue StandardError
+      false
+    end
+
+    # Record a status change. Kept tiny: it runs on go2's thread.
+    #
+    # @param status [Object] go2's Status snapshot
+    # @return [void]
+    def self.note_status(status)
+      @blocked_status = status.phase == :blocked ? status : nil
+      Events.emit(:go2_status, phase: status.phase, cause: status.cause,
+                                reason: status.reason, command: status.command)
+    rescue StandardError
+      nil
+    end
+
     # Specs and a fresh run.
     #
     # @return [nil]
-    def self.reset! = @active = nil
+    def self.reset!
+      @blocked_status = nil
+      @active = nil
+    end
   end
 end

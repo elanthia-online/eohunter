@@ -57,6 +57,53 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(described_class.new('inn', scripts: scripts).tick(world)).to be_nil
   end
 
+  # go2's Status struct, as Lich::Common::Events delivers it.
+  def go2_status(phase:, cause: nil, reason: nil, command: nil)
+    OpenStruct.new(phase: phase, cause: cause, reason: reason, command: command)
+  end
+
+  it 'ends the trip when go2 blocks on a cause walking cannot fix' do
+    events = []
+    EO::Engine::Events.on(:travel_blocked) { |e| events << e.data }
+    trip.tick(world)
+    EO::Engine::Travel.note_status(go2_status(phase: :blocked, cause: :injured,
+                                              reason: 'You are in far too much agony to do that.', command: 'search'))
+
+    result = trip.tick(world)
+    expect(result).to be_failed
+    expect(result.reason).to eq(:could_not_reach)
+    expect(trip.blocked_cause).to eq(:injured)
+    expect(scripts.killed).to eq(['go2'])
+    expect(events.first[:reason]).to match(/far too much agony/)
+  end
+
+  it 'stays underway on a block go2 clears by itself' do
+    trip.tick(world)
+    EO::Engine::Travel.note_status(go2_status(phase: :blocked, cause: :roundtime, reason: '...wait 3 seconds.'))
+    expect(trip.tick(world)).to be_nil
+    expect(scripts.killed).to be_empty
+  end
+
+  it 'does not end a fresh trip on the blocker from a previous one' do
+    trip.tick(world)
+    EO::Engine::Travel.note_status(go2_status(phase: :blocked, cause: :injured, reason: 'agony'))
+    trip.tick(world)
+    expect(trip.done?).to be true
+
+    scripts.finish!('go2')
+    fresh = described_class.new(300, scripts: scripts)
+    expect(fresh.tick(world)).to be_nil
+    expect(fresh.done?).to be false
+  end
+
+  it 'clears the blocked board when go2 reports progress again' do
+    trip.tick(world)
+    EO::Engine::Travel.note_status(go2_status(phase: :blocked, cause: :injured, reason: 'agony'))
+    EO::Engine::Travel.note_status(go2_status(phase: :moving))
+    expect(EO::Engine::Travel.blocked_status).to be_nil
+    expect(trip.tick(world)).to be_nil
+  end
+
   it 'counts a go2 that ended short as an attempt and gives up after five' do
     failed = []
     EO::Engine::Events.on(:travel_failed) { |e| failed << e.data[:attempts] }
