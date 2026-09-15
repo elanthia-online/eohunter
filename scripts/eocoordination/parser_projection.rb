@@ -42,26 +42,28 @@ module EO
       # is started. The caller owns this object and must call {#close}.
       # @return [Boolean] true when installed
       def install!
-        @mutex.synchronize { return true if @installed }
-        ensure_priority_support!
-
-        if @socket_hook.respond_to?(:add_script_hook)
-          @socket_hook.add_script_hook(@hook_name, &method(:input_received))
-        else
-          @socket_hook.add(@hook_name, method(:input_received).to_proc)
-        end
-        @downstream_hook.add(@hook_name, method(:dispatch_completed).to_proc,
-                             persist: false, priority: HOOK_PRIORITY)
-        @mutex.synchronize { @installed = true }
-        true
-      rescue StandardError
-        @socket_hook.remove(@hook_name) rescue nil
-        @downstream_hook.remove(@hook_name) rescue nil
         @mutex.synchronize do
-          @installed = false
-          invalidate_locked
+          return true if @installed
+
+          ensure_priority_support!
+          begin
+            if @socket_hook.respond_to?(:add_script_hook)
+              @socket_hook.add_script_hook(@hook_name, &method(:input_received))
+            else
+              @socket_hook.add(@hook_name, method(:input_received).to_proc)
+            end
+            @downstream_hook.add(@hook_name, method(:dispatch_completed).to_proc,
+                                 persist: false, priority: HOOK_PRIORITY)
+            @installed = true
+          rescue StandardError
+            @socket_hook.remove(@hook_name) rescue nil
+            @downstream_hook.remove(@hook_name) rescue nil
+            @installed = false
+            invalidate_locked
+            raise
+          end
         end
-        raise
+        true
       end
 
       # Return the exact frozen publication only while its native connection
@@ -87,9 +89,9 @@ module EO
       # Remove both hooks and permanently withdraw the current publication.
       # @return [nil]
       def close
-        @socket_hook.remove(@hook_name) rescue nil
-        @downstream_hook.remove(@hook_name) rescue nil
         @mutex.synchronize do
+          @socket_hook.remove(@hook_name) rescue nil
+          @downstream_hook.remove(@hook_name) rescue nil
           @installed = false
           invalidate_locked
         end
@@ -110,6 +112,8 @@ module EO
       # queue. A new input makes every preceding parser cut stale immediately.
       def input_received(_raw, event)
         @mutex.synchronize do
+          return nil unless @installed
+
           bind_current_workers_locked
           invalidate_locked(reset_binding: false)
           @sequence += 1

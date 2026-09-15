@@ -150,11 +150,11 @@ module EO
         # @param socket [IO]
         # @return [String, nil]
         def read_response(socket)
-          deadline = Time.now + READ_TIMEOUT
+          deadline = BoundedFrame.now + READ_TIMEOUT
           buffer = +''
 
           loop do
-            remaining = deadline - Time.now
+            remaining = deadline - BoundedFrame.now
             return nil if remaining <= 0
             return nil unless IO.select([socket], nil, nil, remaining)
 

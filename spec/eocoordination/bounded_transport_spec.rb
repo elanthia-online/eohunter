@@ -124,19 +124,33 @@ RSpec.describe 'Bounded coordination-library transport' do
 
   it 'bounds a server write when the peer never reads the response' do
     factory = lambda do |socket, &block|
-      socket.setsockopt(Socket::SOL_SOCKET, Socket::SO_SNDBUF, 1024)
+      # Model a peer that never makes write progress without relying on host
+      # kernel buffer sizes. Readiness may be spurious, so the absolute
+      # deadline still has to terminate the handler.
+      socket.define_singleton_method(:write_nonblock) do |_data, exception: true|
+        exception ? raise(IO::WaitWritable) : :wait_writable
+      end
       Thread.new(socket, &block)
     end
-    start_server(max_frame_bytes: 8_000_000, client_thread_factory: factory,
-                 request_handler: ->(_request) { { ok: true, payload: 'x' * 4_000_000 } })
+    start_server(client_thread_factory: factory,
+                 request_handler: ->(_request) { { ok: true, payload: 'unread' } })
     socket = connect
-    socket.setsockopt(Socket::SOL_SOCKET, Socket::SO_RCVBUF, 1024)
     socket.write("{\"auth\":\"secret\",\"command\":\"snapshot\"}\n")
     await { client_count == 1 }
     started = frame.now
     await { client_count.zero? }
     expect(frame.now - started).to be < 0.6
     expect(@server.instance_variable_get(:@client_threads)).to be_empty
+  end
+
+  it 'uses a monotonic deadline for legacy response reads' do
+    socket = instance_double(IO)
+    client = client_class.new(host: '127.0.0.1', port: 1, auth_token: 'secret')
+    allow(frame).to receive(:now).and_return(10.0, 10.25)
+    expect(Time).not_to receive(:now)
+    expect(IO).to receive(:select).with([socket], nil, nil, 0.75).and_return(nil)
+
+    expect(client.send(:read_response, socket)).to be_nil
   end
 
   it 'closes reserved sockets during shutdown even before thread creation returns' do

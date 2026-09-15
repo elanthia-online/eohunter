@@ -129,6 +129,61 @@ RSpec.describe EO::Coordination::ParserProjection do
     expect(downstream_hook.handlers).to be_empty
   end
 
+  it 'serializes concurrent installs so each hook is registered once' do
+    entered = Queue.new
+    release = Queue.new
+    calls = 0
+    allow(socket_hook).to receive(:add).and_wrap_original do |original, *args, **options|
+      calls += 1
+      if calls == 1
+        entered << true
+        release.pop
+      end
+      original.call(*args, **options)
+    end
+
+    first = Thread.new { projection.install! }
+    entered.pop
+    second = Thread.new { projection.install! }
+    expect(second.join(0.1)).to be_nil
+    release << true
+    [first, second].each(&:join)
+
+    expect(calls).to eq(1)
+    expect(socket_hook.handlers.size).to eq(1)
+    expect(downstream_hook.handlers.size).to eq(1)
+  ensure
+    release << true if release&.empty?
+    first&.join(0.5)
+    second&.join(0.5)
+  end
+
+  it 'serializes close with an install in progress' do
+    entered = Queue.new
+    release = Queue.new
+    allow(socket_hook).to receive(:add).and_wrap_original do |original, *args, **options|
+      result = original.call(*args, **options)
+      entered << true
+      release.pop
+      result
+    end
+
+    installer = Thread.new { projection.install! }
+    entered.pop
+    closer = Thread.new { projection.close }
+    expect(closer.join(0.1)).to be_nil
+    release << true
+    [installer, closer].each(&:join)
+
+    expect(socket_hook.handlers).to be_empty
+    expect(downstream_hook.handlers).to be_empty
+    expect(projection.read).to be_nil
+  ensure
+    release << true if release&.empty?
+    installer&.join(0.5)
+    closer&.join(0.5)
+  end
+
   it 'fails before registration when deterministic downstream priority is unavailable' do
     legacy = CoordinationProjectionSpecSupport::LegacyProjectionHook.new
     projection = described_class.new(game: game, xml: xml, game_objects: game_objects,
