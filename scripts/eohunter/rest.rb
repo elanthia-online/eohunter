@@ -26,7 +26,7 @@ module EO::Engine
       :resting_room, :return_waypoints, :hunting_room, :rally_rooms,
       :fog_return, :fog_optional, :fog_rift, :custom_fog,
       :resting_commands, :resting_scripts, :hunting_prep_commands, :hunting_scripts,
-      :wander_stance, :rest_interval, :sneaky, :encumbrance_grace, :sites,
+      :wander_stance, :rest_interval, :sneaky, :encumbrance_grace, :sites, :preparations,
       keyword_init: true
     ) do
       # The fried threshold; 101 (never) when the profile leaves it blank.
@@ -459,6 +459,16 @@ module EO::Engine
         @forced_reason = reason
       end
 
+      # A required preparation was denied or uncertain. Use the existing town
+      # return and suppress further preparations until the player restarts.
+      # This records a terminal hunt failure, never an inferred item state.
+      # @param reason [String] failed preparation and action outcome
+      # @return [Boolean] true
+      def preparation_failed!(reason)
+        @preparation_failure ||= reason
+        request_return!(@preparation_failure)
+      end
+
       # A controller return is not a new hunting decision. Cancel only this
       # behavior's outbound trip and enter the existing return path directly;
       # the ordinary rest machinery still owns stance, waypoints, refuge and
@@ -500,6 +510,29 @@ module EO::Engine
       # Any phase but :hunting is a rest in progress.
       # @return [Boolean]
       def resting? = @phase != :hunting
+
+      # The phases where signs belong: standing in the hunting room, and
+      # hunting from it. bigshot's pre_hunt casts them at the hunting room
+      # (7315-7341), and Rest's :arrived issues the cast_signs group order
+      # there. Everything else - the refuge wait, the trip home, the trip
+      # back out - is either parked or travelling, and a sign cast then
+      # burns for the whole walk and dissipates before the first fight.
+      #
+      # Anything wanted earlier goes in the hunting prep commands, which
+      # are sent to the game verbatim, the way bigshot does it.
+      # :hold is not listed: it is the shared wait for nine different
+      # steps, including the disband and the rally on the way out. Only
+      # the one that lands at the hunting room counts, so it is tested
+      # through the hold's own destination rather than the phase.
+      SIGNS_PHASES = %i[arrived done hunting].freeze
+
+      # Whether signs are wanted now, as opposed to held for the walk.
+      # @return [Boolean]
+      def signs_phase?
+        return true if SIGNS_PHASES.include?(@phase)
+
+        @phase == :hold && @hold.is_a?(Hash) && @hold[:why] == :at_hunting_room
+      end
 
       # bigshot pre_hunt: the hunting prep commands and scripts,
       # the rally rooms and the hunting room before the first fight. The
@@ -1015,6 +1048,18 @@ module EO::Engine
           return nil
         end
         line = @remaining.shift
+        if @policy.preparations && !@policy.preparations.empty? && (name = Preparations.name(line))
+          return Actions::Result.new(status: :skipped, reason: :preparation_aborted) if @preparation_failure
+
+          result = Actions::Prepare.new(world, name: name, preparations: @policy.preparations).call
+          if result.skipped?
+            @remaining.unshift(line)
+          elsif result.failed?
+            preparation_failed!("preparation #{name}: #{result.reason}")
+            service_failed(@preparation_failure) if world.room.id.to_s == @town_policy.resting_room.to_s
+          end
+          return result
+        end
         if line =~ /^script\s+(\S+)\s*(.*)/i
           name = Regexp.last_match(1)
           started = start_script(name, Regexp.last_match(2))

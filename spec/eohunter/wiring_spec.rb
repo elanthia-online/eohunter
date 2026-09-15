@@ -41,6 +41,39 @@ RSpec.describe 'EOHunter wiring' do
   # the hook set sees rules it never made.
   after { EO::Engine::Watch.clear! }
 
+  describe 'required preparation failures' do
+    let(:rest) { EO::Engine::Behaviors::Rest.new(policy: profile.rest_policy) }
+    let(:engine) { EO::Engine::Engine.new(world: world, behaviors: [], interval: 0) }
+
+    before do
+      EO::Engine::Events.reset!
+      allow(wiring).to receive(:msg)
+      wiring.wire(engine, rest: rest, rest_policy: profile.rest_policy)
+    end
+
+    after do
+      EO::Engine::Events.reset!
+      EO::Engine::Actions::Base.interrupt = nil
+    end
+
+    it 'requests the ordinary return without stopping in combat, then stops at refuge before preparations replay' do
+      EO::Engine::Events.emit(:preparation_failed, name: 'crystal', status: :timeout, reason: :no_confirmation)
+      expect(rest.phase).to eq(:leave)
+      expect(rest.rest_site).to eq(:town)
+      expect(engine).not_to be_stopping
+      world.id = profile.rest_policy.resting_room
+      engine.tick
+      expect(engine.stop_reason).to eq(:preparation_failed)
+    end
+
+    it 'stops and reports a failed return when the existing travel lifecycle is stranded' do
+      EO::Engine::Events.emit(:preparation_failed, name: 'crystal', status: :failed, reason: :denied)
+      EO::Engine::Events.emit(:rest_stranded, room: 2, here: 1)
+      expect(engine.stop_reason).to eq(:preparation_return_failed)
+      expect(wiring).to have_received(:msg).with('error', /stranded/)
+    end
+  end
+
   # The priority order the engine arbitrates on. A behavior that moves
   # here changes which one wins a tick, so it is pinned by number.
   let(:priorities) do

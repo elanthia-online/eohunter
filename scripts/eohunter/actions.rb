@@ -64,7 +64,7 @@ module EO::Engine
     # The action contract. Subclasses give `preconditions` (a Symbol, :ok
     # to proceed) and `perform` (a Result); `call` runs the shared
     # gates between them. The three confirmation shapes are private
-    # helpers here: send_and_match and send_and_observe.
+    # helpers here: send_and_match, send_and_observe and send_and_await.
     class Base
       # Seconds a confirmation wait lasts when the action names no other.
       DEFAULT_TIMEOUT = 8
@@ -295,6 +295,32 @@ module EO::Engine
       def clock_now = Time.now
 
       # --- confirmation, three shapes -------------------------------------
+
+      # Arm before the ladder so an immediate named event is retained while
+      # fput finishes. A matcher correlates responses; the action decides
+      # whether the confirmed payload means success or refusal.
+      #
+      # @param command [String] one game command
+      # @param types [Array<Symbol>] confirming event names
+      # @param timeout [Numeric] seconds to wait after the ladder returns
+      # @param matcher [#call, nil] optional event correlation filter
+      # @return [Result] the ladder failure unchanged, a confirming event,
+      #   :failed for interrupt/death/cancellation, or :timeout with :no_confirmation
+      # @raise [ArgumentError] before sending if timeout is not finite, real and nonnegative
+      def send_and_await(command, *types, timeout: DEFAULT_TIMEOUT, matcher: nil)
+        Events.validate_timeout!(timeout)
+        waiter = Events.arm(*types, &matcher)
+        first = send_through_ladder(command)
+        return first if first.is_a?(Result)
+
+        event = waiter.wait(timeout: timeout, interrupt: -> { interrupted? }) { me.dead? }
+        return Result.new(status: :success, event: event) if event
+        return Result.new(status: :failed, reason: waiter.reason) if %i[interrupted dead cancelled].include?(waiter.reason)
+
+        Result.new(status: :timeout, reason: :no_confirmation)
+      ensure
+        waiter&.cancel
+      end
 
       # bigshot's cmd_* shape: send, then read lines until one matches
       # +regex+ (every known answer to this command, refusals included) or

@@ -480,3 +480,56 @@ RSpec.describe 'the society readers the Wrack action resolves' do
     expect(action.send(:voln)).to be_nil
   end
 end
+
+RSpec.describe EO::Engine::Behaviors::Maintain, 'while signs are held for the walk' do
+  let(:me) do
+    OpenStruct.new(mana: 100, stamina: 100, max_stamina: 100, spirit: 10, level: 50, voln_favor: 0, blessings_ranks: 0,
+                   dead?: false, muckled?: false, in_rt?: false, in_cast_rt?: false, profession: 'Cleric', name: 'Tester')
+  end
+  let(:spells) { {} }
+  let(:hands) { OpenStruct.new(right: OpenStruct.new(id: '77', noun: 'katana'), left: OpenStruct.new(id: nil, noun: '')) }
+  let(:world) { OpenStruct.new(me: me, spell: spells, hands: hands) }
+  let(:policy) { EO::Engine::Maintain::Policy.new(signs: ['1712']) }
+
+  def spell(num, **over)
+    spells[num] = FakeSpell.new(num: num, name: "Spell #{num}", known: true, active: false, affordable: true, mana_cost: 10, last_cast: Time.at(0), **over)
+  end
+
+  before do
+    table = spells
+    me.define_singleton_method(:spell_active?) { |n| table[n]&.active? || false }
+    me.define_singleton_method(:effect_active?) { |_n| false }
+    me.define_singleton_method(:cooldown_active?) { |_n| false }
+    me.define_singleton_method(:buff_time_left) { |_n| 0.0 }
+    stub_const('Spell', Class.new { def self.[](_n); end })
+    allow(Spell).to receive(:[]) { |n| spells[n] }
+  end
+
+  after { EO::Engine::Events.reset!; EO::Engine::Watch.clear! }
+
+  it 'does not want control, and casts no sign, until signs are wanted' do
+    spell(1712)
+    wanted = false
+    maintain = described_class.new(policy: policy, signs_wanted: -> { wanted })
+    expect(maintain.wants_control?(world)).to be false
+    expect(maintain.tick(world)).to be_nil
+    expect(spells[1712].casts).to eq(0)
+
+    wanted = true
+    expect(maintain.wants_control?(world)).to be true
+    expect(maintain.tick(world)).to be_success
+    expect(spells[1712].casts).to eq(1)
+  end
+
+  it 'still lets Rest drive its own buff recovery at the refuge' do
+    spell(1712)
+    rule = OpenStruct.new(spell: 1712, action: 'recast', required: false)
+    need = OpenStruct.new(rule: rule, state: 'recast')
+    buffs = instance_double(EO::Engine::BuffPolicy::Coordinator, assess: [need], attempted!: nil)
+    maintain = described_class.new(policy: policy, buffs: buffs, signs_wanted: -> { false })
+
+    expect(maintain.wants_control?(world)).to be false
+    expect(maintain.restore_buff(world)).to be_success
+    expect(spells[1712].casts).to eq(1)
+  end
+end

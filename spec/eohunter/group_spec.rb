@@ -422,6 +422,30 @@ RSpec.describe EO::Engine::Group::Member do
     expect(member.leader_phase).to eq(:resting)
   end
 
+  it 'reads the leader signs flag, held for the refuge and both walks' do
+    member.register
+    hub.heartbeat!(name: 'Lead', room: 4, phase: :resting, signs: false)
+    member.leader_state
+    expect(member.leader_signs_wanted?).to be false
+
+    # the walk back out is still :resting, and signs stay held
+    hub.heartbeat!(name: 'Lead', room: 6, phase: :resting, signs: false)
+    member.leader_state
+    expect(member.leader_phase).to eq(:resting)
+    expect(member.leader_signs_wanted?).to be false
+
+    hub.heartbeat!(name: 'Lead', room: 200, phase: :hunting, signs: true)
+    member.leader_state
+    expect(member.leader_signs_wanted?).to be true
+  end
+
+  it 'treats a leader that publishes no signs flag as wanting signs' do
+    member.register
+    hub.heartbeat!(name: 'Lead', room: 4, phase: :hunting)
+    member.leader_state
+    expect(member.leader_signs_wanted?).to be true
+  end
+
   it 'cannot register before a hunt is open' do
     closed = described_class.new(EO::Engine::Group::Hub.new, name: 'Bob', deadline: 0.2)
     expect(closed.register).to be false

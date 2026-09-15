@@ -64,12 +64,30 @@ end
 ```
 
 `Base` gives you `@world`, `me`, `send_through_ladder`,
-`send_and_match`, `send_and_observe`, `interrupted?`, `clock_now` and
+`send_and_match`, `send_and_observe`, `send_and_await`, `interrupted?`, `clock_now` and
 the roundtime settle that `call` runs before `perform`. The answers
 regex should be the game's lines, complete; an action that times out
 waiting for a line it did not list is a bug. Prefer a Lich reader for
 the answer set when one exists (the PSM readers' `results_regex`,
 `Spell.results_regex`).
+
+For a named event, use
+`send_and_await(command, :event_name, timeout: 6, matcher: correlation)`.
+It arms the subscription before sending through the existing refusal ladder,
+then waits with a monotonic deadline and interrupt/death checks. The helper
+adds no retries. Its matcher selects the response; inspect `result.event.data`
+after confirmation to decide whether the game accepted or denied the command.
+A correlated negative response still confirms receipt. Silence returns
+`:timeout` with `:no_confirmation`; ladder failures pass through unchanged.
+Interrupt, death and bus cancellation return `:failed` with `:interrupted`,
+`:dead` or `:cancelled`. Timeouts must be finite nonnegative real numbers;
+the helper validates them before sending, and zero checks immediately.
+
+Arming excludes earlier bus emissions, but cannot establish causation if
+Lich's scanner delivers an older queued game line after arming. Match payload
+fields that identify the requested item or target wherever possible. A caller
+using `Events.arm` directly must either call `wait` or ensure `cancel` runs;
+both release the subscription, and cancellation is safe to repeat.
 
 Spec it by stubbing the send seam:
 
