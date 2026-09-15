@@ -1,12 +1,15 @@
 # frozen_string_literal: true
 
 require_relative 'tools/build'
+require_relative 'tools/build_coordination'
 
-desc 'Build the single-file dist/eohunter.lic from the parts under scripts/eohunter/'
+desc 'Build the single-file EOHunter script and coordination library'
 task :build do
   root = __dir__
-  path = EOHunter::Build.write(root: root)
-  puts "built #{path} (#{File.read(path).lines.size} lines), map at #{path}.map"
+  [EOHunter::Build, EOCoordination::Build].each do |builder|
+    path = builder.write(root: root)
+    puts "built #{path} (#{File.read(path).lines.size} lines), map at #{path}.map"
+  end
 end
 
 desc 'Remove dist/'
