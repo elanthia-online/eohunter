@@ -16,6 +16,18 @@ jobs:
       - run: bundle exec rspec
       - run: bundle exec rubocop
 
+  coordination-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - run: bundle exec rspec spec/eocoordination
+      - run: bundle exec rake build
+      - run: bundle exec ruby -c dist/libeocoordination.lic
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -30,12 +42,17 @@ jobs:
       # the file a contributor edited.
       - run: ruby -c scripts/eohunter.lic
       - run: for f in scripts/eohunter/*.rb; do ruby -c "$f" > /dev/null || exit 1; done
+      - run: ruby -c scripts/libeocoordination.lic
+      - run: for f in scripts/eocoordination/*.rb; do ruby -c "$f" > /dev/null || exit 1; done
       - run: bundle exec rake build
       - run: ruby -c dist/eohunter.lic
+      - run: ruby -c dist/libeocoordination.lic
       - uses: actions/upload-artifact@v4
         with:
-          name: eohunter.lic
+          name: eohunter-scripts
           path: |
             dist/eohunter.lic
             dist/eohunter.lic.map
+            dist/libeocoordination.lic
+            dist/libeocoordination.lic.map
           if-no-files-found: error

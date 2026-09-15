@@ -1,0 +1,62 @@
+=begin
+  libeocoordination: opt-in coordination between independent Lich sessions.
+
+  Loaded once per session with Script.loadlib('libeocoordination'). The library
+  defines transport and protocol mechanics only. It does not publish a session,
+  open a listener, discover peers, start scripts, or issue game commands merely
+  by loading.
+
+    Script.loadlib('libeocoordination')
+    EO::Coordination.require_version('0.1.0')
+
+        author: elanthia-online
+  contributors: ATARI
+          game: Gemstone
+          tags: library, coordination, multi-session
+      required: Lich >= 5.21.0
+       version: 0.1.0
+
+  Version Control:
+  Major_change.feature_addition.bugfix
+  v0.1.0 (2026-09-14)
+    - bounded loopback transport, read-only observations, discovery adapter,
+      and explicitly granted operation delivery
+=end
+
+base = File.join(SCRIPT_DIR, 'eocoordination')
+verbose = $VERBOSE
+begin
+  $VERBOSE = nil
+  load File.join(base, 'protocol.rb')
+  load File.join(base, 'discovery.rb')
+  load File.join(base, 'parser_projection.rb')
+ensure
+  $VERBOSE = verbose
+end
+
+module ::EO
+  module Coordination
+    # Installed coordination-library API version.
+    VERSION = '0.1.0'.freeze unless const_defined?(:VERSION, false)
+    # Oldest consumer API accepted by this release.
+    OLDEST_SUPPORTED = '0.1.0'.freeze unless const_defined?(:OLDEST_SUPPORTED, false)
+
+    # Raised when a consumer requests an unsupported library API version.
+    class VersionError < StandardError; end unless const_defined?(:VersionError, false)
+
+    # Refuse callers built for a newer API or for an API this library dropped.
+    # @param wanted [String] library API version expected by the caller
+    # @return [true]
+    # @raise [VersionError] when the installed library is incompatible
+    def self.require_version(wanted)
+      have = Gem::Version.new(VERSION)
+      want = Gem::Version.new(wanted.to_s)
+      return true if want <= have && want >= Gem::Version.new(OLDEST_SUPPORTED)
+
+      caller_name = Script.current&.name || 'script'
+      message = "#{caller_name} needs a compatible libeocoordination #{wanted}; #{VERSION} is installed"
+      Lich::Messaging.msg('error', message) if defined?(Lich::Messaging)
+      raise VersionError, message
+    end
+  end
+end
