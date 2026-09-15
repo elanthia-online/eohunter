@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: therealatari/hunter
-          ref: 4550a1ef4546e79281e27e5b2cdfe571c6b9923f
+          ref: 226cec54004dfa26076d0a6d1fd46afcfc05db95
           path: .paired-coordination
           persist-credentials: false
       - uses: ruby/setup-ruby@v1
