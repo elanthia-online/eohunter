@@ -122,13 +122,28 @@ RSpec.describe 'Bounded coordination-library transport' do
     release << true
   end
 
-  it 'bounds a server write when the peer never reads the response' do
+  it 'bounds a server write when the socket repeatedly makes no progress' do
+    attempted = Queue.new
+    release = Queue.new
+    attempt_mutex = Mutex.new
+    first_attempt = true
     factory = lambda do |socket, &block|
-      # Model a peer that never makes write progress without relying on host
-      # kernel buffer sizes. Readiness may be spurious, so the absolute
-      # deadline still has to terminate the handler.
-      socket.define_singleton_method(:write_nonblock) do |_data, exception: true|
-        exception ? raise(IO::WaitWritable) : :wait_writable
+      # Exercise the real handler and socket while making write progress
+      # deterministic instead of relying on host kernel buffer sizes.
+      socket.define_singleton_method(:write_nonblock) do |_data, exception: false|
+        raise 'unexpected raising write' if exception
+
+        block_first = attempt_mutex.synchronize do
+          next false unless first_attempt
+
+          first_attempt = false
+          true
+        end
+        if block_first
+          attempted << true
+          release.pop
+        end
+        :wait_writable
       end
       Thread.new(socket, &block)
     end
@@ -136,11 +151,16 @@ RSpec.describe 'Bounded coordination-library transport' do
                  request_handler: ->(_request) { { ok: true, payload: 'unread' } })
     socket = connect
     socket.write("{\"auth\":\"secret\",\"command\":\"snapshot\"}\n")
-    await { client_count == 1 }
+    await { !attempted.empty? }
+    attempted.pop
+    expect(client_count).to eq(1)
     started = frame.now
+    release << true
     await { client_count.zero? }
     expect(frame.now - started).to be < 0.6
     expect(@server.instance_variable_get(:@client_threads)).to be_empty
+  ensure
+    release << true if release && release.empty?
   end
 
   it 'uses a monotonic deadline for legacy response reads' do
