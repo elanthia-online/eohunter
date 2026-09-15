@@ -602,7 +602,9 @@ module EO::Engine
       # @param renewal_cost [#call] -> Integer, a Bard's song renewal cost
       # @param clock [#now] the time source
       # @param buffs [BuffPolicy::Coordinator, nil] opt-in requirements shared with Rest
-      def initialize(policy:, state: EO::Engine::Maintain::State.new, renewal_cost: nil, clock: Time, buffs: nil)
+      # @param signs_wanted [#call] -> Boolean, false while signs are held for the walk
+      def initialize(policy:, state: EO::Engine::Maintain::State.new, renewal_cost: nil, clock: Time, buffs: nil,
+                     signs_wanted: -> { true })
         super()
         @policy = policy
         @state = state
@@ -610,6 +612,7 @@ module EO::Engine
         @renewal_cost = renewal_cost || -> { 0 }
         @clock = clock
         @buffs = buffs
+        @signs_wanted = signs_wanted
         @due = nil
         install_watch
       end
@@ -619,9 +622,23 @@ module EO::Engine
 
       # Whether a bless is wanted or a sign is due, remembered for tick.
       #
+      # Signs belong at the hunting room, where bigshot's pre_hunt casts
+      # them and where Rest issues its cast_signs order. Held everywhere
+      # else in the cycle: parked in the refuge, walking home, walking
+      # back out. A sign cast on the way out burns for the whole trip and
+      # can dissipate before the first fight.
+      #
+      # Anything wanted earlier belongs in the hunting prep commands,
+      # which reach the game verbatim. Rest's own buff recovery still
+      # runs at the refuge through restore_buff, which is called directly
+      # and does not pass through this gate.
+      #
       # @param world [World]
       # @return [Boolean]
       def wants_control?(world)
+        @due = nil
+        return false unless @signs_wanted.call
+
         return true if @buffs && @buffs.assess(world).any? { |need| %w[recast pending spellup spellup_check].include?(need.state) }
 
         @due = next_due(world)
@@ -634,6 +651,8 @@ module EO::Engine
       # @param world [World]
       # @return [Actions::Result, nil] nil when nothing is due
       def tick(world)
+        return nil unless @signs_wanted.call
+
         if @buffs && @buffs.assess(world).any? { |need| %w[recast pending spellup spellup_check].include?(need.state) }
           return restore_buff(world)
         end
