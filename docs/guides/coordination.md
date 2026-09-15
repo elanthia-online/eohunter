@@ -1,10 +1,13 @@
 # Read-only coordination pilot
 
 `EO::Engine::Coordination::Adapter` publishes a copy of the existing group
-report and movement predicate through an explicitly supplied Lich coordination
+report and movement predicate through an explicitly supplied `EO::Coordination`
 session. Loading the engine does not create a session, listener, observer, or
 adapter. No profile key or command-line mode enables it. This is programmatic
-pilot wiring for the separately built coordination prototype.
+pilot wiring for the independently distributed
+[`libeocoordination` library](https://github.com/elanthia-online/eohunter/pull/115).
+The library supplies session identity, publication and bounded loopback reads;
+the adapter owns only the existing Hunter policy projection.
 
 The adapter has no movement, hold/release, command, or order-delivery interface.
 The current group Hub/Member DRb transport, follower reports, and movement
@@ -27,7 +30,8 @@ state; they must not query a remote member, issue game commands, or start work.
 If an existing policy callback can do those things, it is unsuitable for this
 read-only pilot.
 
-An illustrative explicit attachment, after constructing an enabled prototype
+An illustrative explicit attachment, after explicitly loading compatible
+`libeocoordination` 0.1.0 and constructing an enabled `EO::Coordination::Session`
 session and an existing engine, is:
 
 ```ruby
@@ -91,7 +95,7 @@ report actual source versions/ages. An absent reader leaves connection state,
 room epoch, and source qualities unknown. Supplying metadata never certifies
 the independent World reads as coherent. Source age is local elapsed age,
 not a timestamp to compare with another process's monotonic clock; transport
-freshness and repeated-version aging belong to the core session/client.
+freshness and repeated-version aging belong to the library session/client.
 Endpoint liveness cannot increment the owner's completed tick. Neither an
 idle parser nor an unchanged source version alone proves the game is stalled.
 
@@ -107,13 +111,14 @@ still enforce identity, source quality, and age when reading cached data.
 existing Group policy calls, immutable copies, room/connection/owner changes
 during capture, missing sources, roundtime/looting diagnostics, stopped owner
 progression, and optional publication failure. All worlds and publishers are
-local fakes. Core process/transport tests cover protocol and freshness; no
+local fakes. Library process/transport tests cover protocol and freshness; no
 live-game acceptance or movement migration is claimed by this adapter.
 
 The optional `spec/eohunter/coordination_integration_spec.rb` uses the actual
-paired Lich `Session`, native loopback transport and `Client`, with the real
-engine callback and `Group.report` over a fake World. Run it by setting
-`LICH_COORDINATION_ROOT` to that explicit checkout when invoking RSpec. It
+paired `EO::Coordination::Session`, library loopback transport and `Client`,
+with the real engine callback and `Group.report` over a fake World. Run it by
+setting `EO_COORDINATION_ROOT` to the `scripts` directory of the #115 checkout
+when invoking RSpec. It
 checks that unknown observations survive transport, pings cannot freshen a
 stopped owner, and reconnect fences prior readers. Without that environment
 variable the cross-repository examples are pending; ordinary Hunter specs do

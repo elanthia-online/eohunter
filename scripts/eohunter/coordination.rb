@@ -4,7 +4,7 @@ module EO::Engine
   # Opt-in, read-only projection of existing group policy at an owner tick.
   # No endpoint, observer, game command, or movement barrier is installed here.
   module Coordination
-    # Copies Group.report and the existing movement predicate for a core session.
+    # Copies Group.report and the existing movement predicate for a library session.
     # World currently samples native readers independently. Generation fences
     # reject known mixed captures, but cannot make those readers atomic.
     class Adapter
@@ -21,7 +21,7 @@ module EO::Engine
       # report_reader reuses Group.report with the owner's existing settings.
       # movement_reader reuses Group::Leader#movement_ready? when available.
       #
-      # @param publisher [#identity, #publish] opt-in Lich coordination session
+      # @param publisher [#identity, #publish] opt-in libeocoordination session
       # @param report_reader [#call] returns the existing Group::Report for World
       # @param movement_reader [#call, nil] existing local movement predicate
       # @param source_reader [#call, nil] native generation/version/age metadata

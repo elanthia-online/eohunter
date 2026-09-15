@@ -3,17 +3,17 @@
 require_relative 'engine_helper'
 require_relative 'support/fake_world'
 
-RSpec.describe 'EOHunter with the opt-in Lich coordination prototype' do
+RSpec.describe 'EOHunter with the opt-in libeocoordination library' do
   before(:context) do
-    root = ENV['LICH_COORDINATION_ROOT']
-    skip 'set LICH_COORDINATION_ROOT to the paired Lich prototype checkout' if root.nil? || root.empty?
-    require File.join(File.expand_path(root), 'lib/internal_api/coordination')
+    root = ENV['EO_COORDINATION_ROOT']
+    skip 'set EO_COORDINATION_ROOT to the libeocoordination scripts directory' if root.nil? || root.empty?
+    require File.join(File.expand_path(root), 'eocoordination/protocol')
   end
 
   let(:clock) { [100.0] }
   let(:session) do
-    Lich::InternalAPI::Coordination::Session.new(game: 'GS3', character: 'Bob', run_id: 'offline-hunt',
-                                                 read_token: 'offline-integration-only', enabled: true, clock: -> { clock.first })
+    EO::Coordination::Session.new(game: 'GS3', character: 'Bob', run_id: 'offline-hunt',
+                                  read_token: 'offline-integration-only', enabled: true, clock: -> { clock.first })
   end
   let(:world) { FakeWorld.new }
   let(:engine) { EO::Engine::Engine.new(world: world, behaviors: [], interval: 0) }
@@ -25,8 +25,8 @@ RSpec.describe 'EOHunter with the opt-in Lich coordination prototype' do
   end
   let(:adapter) { EO::Engine::Coordination::Adapter.new(publisher: session, report_reader: reader) }
   let(:client) do
-    Lich::InternalAPI::Coordination::Client.new(descriptor: session.descriptor,
-                                                read_token: 'offline-integration-only', max_age: 1.0)
+    EO::Coordination::Client.new(descriptor: session.descriptor,
+                                 read_token: 'offline-integration-only', max_age: 1.0)
   end
 
   before do
@@ -44,7 +44,7 @@ RSpec.describe 'EOHunter with the opt-in Lich coordination prototype' do
     EO::Engine::Events.reset!
   end
 
-  it 'carries an actual completed Group report over the native transport as unknown readiness' do
+  it 'carries an actual completed Group report over the library transport as unknown readiness' do
     expect(client.snapshot[:ok]).to be false
     engine.tick
     expect(adapter.last_error).to be_nil
@@ -83,8 +83,8 @@ RSpec.describe 'EOHunter with the opt-in Lich coordination prototype' do
     session.reconnect
     expect(old_client.snapshot[:ok]).to be false
     engine.tick
-    current = Lich::InternalAPI::Coordination::Client.new(descriptor: session.descriptor,
-                                                          read_token: 'offline-integration-only')
+    current = EO::Coordination::Client.new(descriptor: session.descriptor,
+                                           read_token: 'offline-integration-only')
     result = current.snapshot
     expect(result[:ok]).to be true
     expect(result[:payload]).to include(identity: session.identity, owner_tick: 2, ready: false)
