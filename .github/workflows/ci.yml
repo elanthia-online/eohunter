@@ -30,12 +30,17 @@ jobs:
       # the file a contributor edited.
       - run: ruby -c scripts/eohunter.lic
       - run: for f in scripts/eohunter/*.rb; do ruby -c "$f" > /dev/null || exit 1; done
+      - run: ruby -c scripts/libeocoordination.lic
+      - run: for f in scripts/eocoordination/*.rb; do ruby -c "$f" > /dev/null || exit 1; done
       - run: bundle exec rake build
       - run: ruby -c dist/eohunter.lic
+      - run: ruby -c dist/libeocoordination.lic
       - uses: actions/upload-artifact@v4
         with:
-          name: eohunter.lic
+          name: eohunter-scripts
           path: |
             dist/eohunter.lic
             dist/eohunter.lic.map
+            dist/libeocoordination.lic
+            dist/libeocoordination.lic.map
           if-no-files-found: error

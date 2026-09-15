@@ -223,29 +223,33 @@ line reference.
 - [Contributing](docs/guides/contributing.md): the flow, the conventions, review
 - [Core dependencies](docs/guides/core-dependencies.md): the lich-5 PRs, what each provides, the test package
 
-## Building the single-file script
+## Building the single-file scripts
 
 The engine is developed and tested as parts under `scripts/eohunter/`,
 but Lich's installers cannot place a directory: `;repo` fetches one
-script file and jinx installs assets flat. So distribution is a single
-`eohunter.lic` with the parts inlined, built from the repo:
+script file and jinx installs assets flat. So distribution uses an
+`eohunter.lic` with the engine parts inlined and a self-contained
+`libeocoordination.lic` with the coordination parts inlined:
 
 ```
-bundle exec rake build      # writes dist/eohunter.lic and dist/eohunter.lic.map
+bundle exec rake build      # writes both .lic files and their line maps
 ```
 
-The builder (`tools/build.rb`) takes `scripts/eohunter.lic`, replaces its
+The EOHunter builder (`tools/build.rb`) takes `scripts/eohunter.lic`, replaces its
 one `load` line with `engine.rb` and every part in `PARTS` order, each
 behind a `# ==== eohunter/<part>.rb ====` marker, and turns `load_parts`
 into a no-op. `EO::Engine::BUILT_FROM` records the commit. The map lists
 each part's first and last line in the built file, so a line number in
 a Lich error traces back to the part. `dist/` is not committed; the
 parts stay the source of truth and the specs never load the built file.
+`tools/build_coordination.rb` similarly inlines `scripts/eocoordination/*.rb`
+in dependency order and removes only their internal `require_relative` lines;
+the built library retains its inert load behavior and public version check.
 
-CI builds it on every push and keeps it as a workflow artifact. A tag
-`v<version>` matching `EO::Engine::VERSION` builds it again, runs the
-specs, and attaches `eohunter.lic` and its map to a GitHub release of
-that tag. Where the built file goes from there, the scripts repo for
+CI builds both files on every push and keeps them as a workflow artifact. A tag
+`v<version>` matching `EO::Engine::VERSION` builds them again, runs the
+specs, and attaches both scripts and maps to a GitHub release of that
+tag. Where the built files go from there, the scripts repo for
 `;repo` and the standard jinx manifest or a manifest of this repo's own,
 is not decided yet.
 

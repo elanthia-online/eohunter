@@ -23,6 +23,7 @@ jobs:
       - run: bundle exec rspec
       - run: bundle exec rake build
       - run: ruby -c dist/eohunter.lic
+      - run: ruby -c dist/libeocoordination.lic
       - name: Check the tag matches the engine version
         run: |
           version=$(ruby -e "puts File.read('scripts/eohunter/engine.rb')[/VERSION = '([^']+)'/, 1]")
@@ -32,4 +33,6 @@ jobs:
           files: |
             dist/eohunter.lic
             dist/eohunter.lic.map
+            dist/libeocoordination.lic
+            dist/libeocoordination.lic.map
           generate_release_notes: true
