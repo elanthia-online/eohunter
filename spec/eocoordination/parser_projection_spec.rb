@@ -153,7 +153,7 @@ RSpec.describe EO::Coordination::ParserProjection do
     expect(socket_hook.handlers.size).to eq(1)
     expect(downstream_hook.handlers.size).to eq(1)
   ensure
-    release << true if release&.empty?
+    release << true if release && release.empty?
     first&.join(0.5)
     second&.join(0.5)
   end
@@ -179,7 +179,7 @@ RSpec.describe EO::Coordination::ParserProjection do
     expect(downstream_hook.handlers).to be_empty
     expect(projection.read).to be_nil
   ensure
-    release << true if release&.empty?
+    release << true if release && release.empty?
     installer&.join(0.5)
     closer&.join(0.5)
   end
