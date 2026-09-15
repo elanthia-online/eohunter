@@ -1,154 +1,107 @@
 # Coordination hold/release pilot
 
-Status: draft pilot; offline coverage and bounded two-character live smoke pass.
-Normal Hunter installation and profiles are unchanged.
-Scope approved 2026-09-13 after the read-only two-character smoke.
+This draft adapter consumes the independently distributed
+[`libeocoordination` library](https://github.com/elanthia-online/eohunter/pull/115).
+It shares [#110](https://github.com/elanthia-online/eohunter/pull/110)'s completed-
+tick hook, but does not require its read-only adapter. Whichever lands second
+must reconcile that shared hook. The local policy and library contract match
+the hold adapter in [#114](https://github.com/elanthia-online/eohunter/pull/114);
+that broader group-transport integration remains a separate proposal.
 
-This is an EOHunter-only follow-up to [#110](https://github.com/elanthia-online/eohunter/pull/110).
-It shares that proposal's small completed-tick hook, but does not include or
-require its read-only adapter. Whichever lands second should reconcile the
-shared hook rather than duplicate it. It requires the bounded native transport
-and identity schema in [lich-5 #1613](https://github.com/elanthia-online/lich-5/pull/1613),
-without adding write operations to the read-only Session. This is not a general
-Lich coordination interface yet. Do not merge until the native dependency is
-available in the supported test package and maintainers approve this scope.
+The library owns bounded transport, pair identity, tickets, replay protection,
+capacity and receipts. EOHunter owns safe-room eligibility and local pause/resume
+policy. This draft depends on a compatible library release (API 0.1.0); it does
+not depend on the closed Lich core coordination proposal. The library's runtime
+integration requirements are documented with #115.
 
-## Smallest useful test
+## Scope and explicit setup
 
-Two independent character processes remain in a declared safe room. One owns an
-empty Hunter engine (`behaviors: []`); the other can request `hold` and `release`.
-The owner applies requests on its own ticks. No movement, combat, child scripts,
-game commands, automatic discovery, or ordinary hunting profile changes.
+Two independent character processes stay in a declared safe room. One owns an
+empty Hunter engine (`behaviors: []`); its explicitly granted peer may request
+`hold` and `release`. Loading Hunter is inert. No normal profile or command-line
+mode enables the pilot, and it sends no movement, combat or game commands and
+starts no child scripts.
+
+The caller creates a compatible `EO::Coordination::Session`, establishes its
+connection lifecycle, and supplies the exact peer identity, a dedicated control
+token, the designated safe room, and a local eligibility reader. The adapter
+loads `libeocoordination` on explicit construction if necessary and checks its
+API version. The caller must invoke `start` and close the adapter in `ensure`
+on the engine owner thread. Admission can be revoked from another thread;
+only an owner turn can confirm local cleanup.
 
 `Controller::Runtime#request('hold')` initiates a supervised return to safety;
-that is deliberately NOT the operation used here. The pilot reuses
-`Engine#pause!` / `resume!` with a local ownership key. Legacy no-argument calls
-still operate the manual hold. A peer can release only its own exact hold, and a
-manual resume cannot clear a coordination hold either.
+this pilot uses `Engine#pause!` / `resume!` with a local ownership key.
+Manual no-argument pauses remain independent. The peer can release only its
+own exact hold, and a manual resume cannot clear the coordination hold.
 
-The pilot refuses engines with behaviors. Pausing all behaviors in a real hunt
-would also pause survival; this pilot does not authorize that. A later hunting
-integration needs a separate policy review, not removal of this check as setup.
+The adapter refuses engines with behaviors. Pausing all behaviors in a real
+hunt would also pause survival, so this pilot does not authorize normal hunting
+integration. The read-only adapter still reports unknown coherence; a hold
+receipt does not establish shared movement readiness or enable group travel.
 
-## Grant and request contract
+## Request and owner contract
 
-- Explicit construction and `start` are required. Loading Hunter is inert.
-- One endpoint, one exact owning session/run, one pinned peer identity, one
-  separately supplied control token. Callers must supply a different token from
-  the read endpoint; only this control token authenticates requests here.
-- Full target and peer identities accompany every request. Same-host/same-user
-  credentials prevent accidental use, not hostile same-user impersonation.
-- `ticket` reserves a request ID and its immutable operation arguments. The
-  receiver returns a random ticket valid for five receiver-local seconds.
-  Retrying issuance returns the same ticket and never extends its lifetime.
-- `submit` presents that ticket. Only `hold` and `release` exist; a release names
-  the exact hold request ID. Admission returns `pending`, not successful action.
-- `result` reconciles by request ID. An applied receipt is published only after
-  the owner completes a tick. It records that tick and the effective engine
-  state, not an assertion of current game readiness or observed game action.
-- `hold` has a fixed 15-second lease from owner application. A second hold is
-  refused until the first is released. No renewal operation in this pilot.
-- Expired tickets cannot first execute. Late duplicates can read their existing
-  result but cannot execute again. Conflicting reuse of an ID is refused.
-- Keep at most 32 request reservations for the entire pilot run. Never evict a
-  receipt and accidentally make an old ID executable again. At capacity start a
-  new explicitly granted pilot, with a new run identity and token.
+- One endpoint binds one exact session/run, one pinned peer identity and one
+  separately supplied control token. Use a different token from the read
+  endpoint. Same-user credentials prevent accidental use, not hostile
+  impersonation by another process with access to those credentials.
+- The library reserves an immutable request ID and arguments using a ticket
+  valid for five receiver-local seconds. Retrying does not extend its deadline.
+  Only `hold` (no arguments) and `release` (an exact `hold_id`) are granted.
+- Submission returns `pending`. A completed engine turn takes at most one
+  request; the following start callback checks safety and applies local policy.
+  That turn's completed callback settles the receipt with its observed outcome.
+- A receipt remains `running` until settlement. Its owner tick and engine state
+  describe that observation, not current game readiness. An interrupted effect
+  has an `unknown` outcome; admission or a network reply never proves success.
+- An applied hold has a fixed 15-second local safety window. Another hold is
+  refused while active. There is no renewal or resource-allocation interface.
+- Duplicate delivery cannot reapply an operation or renew a hold. Conflicting
+  request-ID reuse is refused. The library bounds receipts and retains replay
+  protection for the grant; capacity requires a new explicit grant.
+- A release settles only after the owner relinquishes the exact local hold.
+  Applied holds keep cleanup pending until release or fail-closed owner cleanup.
 
-The receiver-issued ticket bounds issuance-to-use, NOT the age of a human's
-original intent. Authentication does not supply freshness or idempotency.
+Tickets bound issuance-to-use, not the age of a human's original intent.
+The library socket worker validates and updates bounded receipt state; it never
+executes Hunter policy. There is no Hunter socket protocol, receipt store,
+discovery registry or second Script supervisor.
 
-## Owner and failure rules
+## Safety and failure
 
-The native socket worker only validates and updates bounded receipt state. The
-engine's existing `on_tick` callback checks the current session identity and
-local safe-room eligibility, then drains admitted requests. Its
-`on_tick_completed` callback confirms the resulting engine state. No second
-Script supervisor or child registry is created: the bounded request/receipt
-table is coordination bookkeeping only.
+Every owner turn must positively establish the same session identity, designated
+room, no live creatures, no death, no roundtime/cast roundtime, and explicit
+local eligibility. Missing/unknown safety values, eligibility exceptions,
+leaving the room, death or reconnect fail closed. The caller must wire real
+connection state into eligibility; an open loopback socket cannot prove a live
+game connection.
 
-Safe eligibility must explicitly be true on every tick; exceptions, nil,
-leaving the declared room, death, or a reconnect fail closed. The caller must
-provide a local connection/eligibility reader, and wire it to the real session
-owner. The pilot cannot infer a game reconnect from an open socket.
+Revocation or expiry of the active hold window stops the empty engine and
+relinquishes only this adapter's pause. Manual holds survive; it never resumes
+autonomous work. A stalled owner cannot acknowledge expiry or cleanup until it
+ticks again. Network timeout, request expiry and confirmed cleanup are distinct
+facts. Native Script still owns script lifetime and shutdown.
 
-A lost grant, endpoint closure, or expired active lease stops the empty engine
-on its next owner tick; it does not resume into autonomous work. Manual holds
-remain intact. A stalled owner stays held but cannot acknowledge expiry or
-cleanup until it ticks again. Network timeout, operation expiry, and completed
-cleanup are separate facts. Shutdown must be invoked by the owning script in
-ensure; stopping the script is still native Script's responsibility.
+## Offline verification
 
-Receipts include `cleanup` (`not_required`, `pending`, `complete`). An applied
-hold keeps cleanup pending until that exact hold is released or the owner has
-stopped and relinquished the pilot's local hold. A network response alone never
-proves that cleanup happened. A terminal receipt's tick/state describes its
-observation then, not a live status poll.
-
-## Verification before live use
-
-1. Legacy pause/resume semantics, independent manual and peer holds.
-2. Pending before owner tick; applied only after completion; zero game sends.
-3. Duplicate delivery, conflicting IDs, expired first delivery, bounded capacity.
-4. Exact release target, wrong peer/token/run/generation, closed owner.
-5. Reconnect, safety loss, grant closure and lease expiry stop without auto-resume.
-6. A manual hold arriving during a peer hold survives peer release.
-7. Paired native socket test, then two independent processes with explicit tokens.
-8. Safe-room live smoke only after installing the tested build and verifying both
-   characters and scripts. Keep private token files out of logs and repositories.
-
-The read-only adapter still reports unknown coherence. Hold confirmation does
-not make shared movement readiness coherent or enable group travel.
-
-## Reproducing the offline contract
-
-Point `LICH_COORDINATION_ROOT` at a checkout of lich-5 #1613 (tested commit
-`c5da7b5f3d26ba6dd0df63186b3161ef50a2129a`), then run:
+Point `EO_COORDINATION_ROOT` at the `scripts` directory of the #115 checkout:
 
 ```sh
-LICH_COORDINATION_ROOT=/path/to/lich-5 bundle exec rspec
+EO_COORDINATION_ROOT=/path/to/eohunter/scripts bundle exec rspec
 bundle exec rubocop
 bundle exec rake build
 bundle exec rake doc
 ```
 
-Without that variable the native integration examples are explicitly pending.
-The dedicated coordination workflow pins the above commit and runs all 33
-focused cases, including a forked peer over the actual native loopback endpoint.
-Default Hunter startup does not require or enable the optional Lich prototype.
+Without that variable the optional library integration examples are pending.
+The paired suite exercises the actual bounded loopback endpoint, including a
+forked peer, over fake Worlds. It covers completed-turn ordering, independent
+manual holds, exact release targeting, revocation/reconnect, hold expiry, safety
+loss and interrupted effects. Every adapter example asserts zero game commands.
+The library's own suites cover protocol authentication, ticket expiry, replay,
+conflicting request IDs and bounded receipt capacity.
 
-## Test evidence (2026-09-13)
-
-- Original integrated branch (including #110): 897 examples, zero failures
-  (seed 62039). The exact publication branch omits #110's independent adapter
-  tests: 874 examples, zero failures with the pinned native dependency (seed 719).
-- 33 focused cases cover ownership, the protocol and failure handling, including
-  an actual forked peer talking to the native bounded endpoint.
-- Rubocop: all 83 Ruby files, no offenses. YARD: 100% documented.
-- Single-file build and Ruby compilation pass.
-- The exact private live-smoke script also runs in two independent Ruby
-  processes against fake Worlds. All nine checks pass, with no game commands
-  and private credential files removed. This rehearsal caught an unknown-receipt
-  `false`/`nil` mistake in the diagnostic before deployment.
-- Receipt `owner_age` increases without owner progress; reading it cannot
-  refresh the recorded application time. Unknown death/RT values or a creature
-  arriving in the declared room fail closed.
-
-The user explicitly launched the private diagnostic on Calvix and Skooshii in
-safe room 324. All nine live checks passed at 10:32:51 +07, and both scripts
-exited. Fresh LAB observations then confirmed both characters remained alive,
-in room 324, with zero RT, no creatures and no active controller ownership.
-Temporary grant files were removed. Neither normal hunting profiles nor the
-normal Hunter installation were modified for this test.
-
-The private test uses an empty engine, checks native game-connection thread
-identity/liveness and room safety throughout, and prohibits every game command
-and child start using native Script execution guards. Its first launch exposed
-a diagnostic-only bug: a deny-all policy also rejected nil execution checkpoints.
-That was corrected to allow nil checkpoints while still denying command strings;
-three tests against the actual native guard and the repeated two-process
-rehearsal passed before the successful live retry. No Lich guard change was made.
-
-The private character-specific launcher and raw game logs are not distributed
-with this PR. The portable protocol spec is checked in. Live checks covered
-identity, hold/release, duplicate delivery, preserving a local manual pause,
-and teardown; expiry/reconnect/failure cases were tested offline, not in game.
+These offline checks establish the bounded adapter contract only. Historical
+safe-room experiments do not establish acceptance of this revised branch, and
+no live-game or group movement acceptance is claimed here.
