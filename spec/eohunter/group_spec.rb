@@ -1372,7 +1372,7 @@ end
 # spec, so this pins the arrangement in the source until one exists.
 RSpec.describe 'the group shutdown in eohunter.lic' do
   let(:source) { File.read(File.expand_path('../../scripts/eohunter.lic', __dir__)) }
-  let(:teardown) { source[/^before_dying do\n.*?\n^end\n/m] }
+  let(:teardown) { source[/^unless dry\n  before_dying do\n.*?\n^end\n/m] }
   let(:run_path) { source[/^else\n  # bigshot pre_hunt.*?\n^end\n/m] }
 
   it 'acknowledges the shutdown from the run path, where the DRb thread is alive' do
