@@ -48,6 +48,8 @@ module EO::Engine
       @on_tick = []
       @on_tick_completed = []
       @completed_ticks = 0
+      @pause_owners = {}
+      @pause_mutex = Mutex.new
     end
 
     # Fires inside each budgeted behavior's window right now, `{name => count}`.
@@ -102,16 +104,26 @@ module EO::Engine
     # @return [Boolean] true once `stop!` has been called
     def stopping? = @stopping
 
-    # Hold in place without tearing down the session; resume! continues.
+    # Hold in place without tearing down the session. Independent owners
+    # cannot release one another's holds; legacy calls own the manual hold.
     #
+    # @param owner [Object] stable local ownership key, never a remote reference
     # @return [true]
-    def pause!  = @paused = true
-    # Lift the hold; the next tick chooses a behavior again.
+    def pause!(owner: :manual)
+      @pause_mutex.synchronize { @pause_owners[owner] = true }
+    end
+
+    # Lift only this owner's hold. Other holds still prevent arbitration.
     #
+    # @param owner [Object] the same local key passed to pause!
     # @return [false]
-    def resume! = @paused = false
-    # @return [Boolean] true while held by `pause!`
-    def paused? = !!@paused
+    def resume!(owner: :manual)
+      @pause_mutex.synchronize { @pause_owners.delete(owner) }
+      false
+    end
+
+    # @return [Boolean] true while any owner holds the engine
+    def paused? = @pause_mutex.synchronize { !@pause_owners.empty? }
 
     # A frozen snapshot for the status line: state (:running, :held,
     # :stopped), reason, the behavior holding control, every behavior's
@@ -120,7 +132,7 @@ module EO::Engine
     # @return [Hash{Symbol => Object}]
     def status
       {
-        state: @stopping ? :stopped : (@paused ? :held : :running),
+        state: @stopping ? :stopped : (paused? ? :held : :running),
         reason: @stop_reason,
         behavior: @holder&.name,
         behaviors: @behaviors.map(&:name).freeze,
@@ -151,7 +163,7 @@ module EO::Engine
       # member, the rescued child): nothing acts after that.
       return if @stopping
 
-      if @paused
+      if paused?
         hand_off(nil)
         complete_tick
         sleep(@interval)

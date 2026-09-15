@@ -66,6 +66,7 @@ module ::EO
       cleanse
       group
       runner
+      coordination_hold
       coordination
       controller
     ].freeze
