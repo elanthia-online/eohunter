@@ -1,0 +1,30 @@
+name: coordination readiness contract
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # Pin the independently distributed library contract consumed by this
+      # branch; update/remove the pin when eohunter #115 lands.
+      - uses: actions/checkout@v4
+        with:
+          repository: therealatari/hunter
+          ref: 4550a1ef4546e79281e27e5b2cdfe571c6b9923f
+          path: .paired-coordination
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - run: bundle exec rspec spec/eohunter/coordination_spec.rb spec/eohunter/coordination_integration_spec.rb
+        env:
+          EO_COORDINATION_ROOT: ${{ github.workspace }}/.paired-coordination/scripts
