@@ -284,6 +284,21 @@ RSpec.describe EO::Engine::Engine do
     expect(errors.first[:message]).to eq('unexpected')
   end
 
+  it 'propagates native guard interruption to its owner without declaring an engine error or completing the tick' do
+    interruption_class = Class.new(StandardError)
+    stub_const('Lich::Common::ScriptExecutionGuard::Interrupted', interruption_class)
+    interruption = interruption_class.new('checkpoint_rejected')
+    exploder = behavior(priority: 0, wants: true) { raise interruption }
+    errors, completed = [], []
+    EO::Engine::Events.on(:engine_error) { |event| errors << event.data }
+    engine = described_class.new(world: world, behaviors: [exploder], interval: 0)
+    engine.on_tick_completed { completed << true }
+
+    expect { engine.tick }.to(raise_error { |error| expect(error).to equal(interruption) })
+    expect(errors).to be_empty
+    expect(completed).to be_empty
+  end
+
   it 'tells the behavior it preempts, once, and again on idle and pause' do
     log = []
     urgent = behavior(priority: 0, wants: false)

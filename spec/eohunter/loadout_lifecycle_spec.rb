@@ -189,7 +189,7 @@ RSpec.describe 'Loadout lifecycle' do
   end
 
   it 'reports a follower failure through Orders and uses the leader refuge, not its blank personal setting' do
-    member = instance_double(EO::Engine::Group::Member, rooms: { resting: 20 }, orders: [], leader_phase: :hunting)
+    member = instance_double(EO::Engine::Group::Member, rooms: { resting: 20 }, orders: [], leader_phase: :hunting, strict_movement?: false)
     follower_policy = EO::Engine::Rest::Policy.new
     orders = EO::Engine::Behaviors::Orders.new(member: member, policy: follower_policy)
     engine = EO::Engine::Engine.new(world: world, behaviors: [orders, loadout], interval: 0)

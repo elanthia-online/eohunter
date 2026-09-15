@@ -431,6 +431,7 @@ explicit loadout failure, not permission to attack with a different weapon.
 | `random_loot` | bool | false | Group: a random looter each fight |
 | `quiet_followers` | bool | true | Group: followers do not print the leader's orders |
 | `group_fried_trigger` | split | any | Group: `any`, `all`, or names; whose fried brings the group home |
+| `group_strict_movement` | bool | false | Experimental same-host named-roster movement acknowledgments; enable on every participant. See [strict movement](strict-group-movement.md) for scope and limits. |
 
 ## Cleanse
 

@@ -228,9 +228,10 @@ module EO::Engine
       # @param stance [#call] (name) -> Boolean; default Lich::Gemstone::Stance.change
       # @param tracking [Tracking::Policy] bandit mode and the Ranger's quarry
       # @param state [Engage::State] shared with Engage for the combat-blocked room
+      # @param movement [Group::Leader, nil] explicit strict group movement owner
       # @param clock [#now] the time source, injectable for specs
       def initialize(policy:, targets_policy:, walker: nil, area: nil, travel: nil, stance: nil, tracking: nil,
-                     state: EO::Engine::Engage::State.new, clock: Time)
+                     state: EO::Engine::Engage::State.new, movement: nil, clock: Time)
         super()
         @policy = policy
         @targets_policy = targets_policy
@@ -241,6 +242,7 @@ module EO::Engine
         @stance = stance || ->(name) { ::Lich::Gemstone::Stance.change(name) }
         @tracking = tracking || EO::Engine::Tracking::Policy.new
         @state = state
+        @movement = movement
         @clock = clock
         @entered_room = nil
         @arrived_at = nil
@@ -305,7 +307,7 @@ module EO::Engine
           return Actions::Result.new(status: :failed, reason: :no_exit) if step.nil?
 
           Events.emit(:combat_blocked_departure, room: world.room.id)
-          return Actions::Move.new(world, way: step.last).call
+          return move_step(world, step.last)
         end
 
         # bigshot sleeps wander_wait after the first look and looks again;
@@ -365,6 +367,10 @@ module EO::Engine
         end
 
         if @trip || (@area&.built? && !@area.include?(world.room.id))
+          if @movement&.strict_movement?
+            Events.emit(:coordination_return_required, reason: :out_of_bounds, room: world.room.id)
+            return Actions::Result.new(status: :skipped, reason: :coordination_return_required)
+          end
           Events.emit(:out_of_bounds, room: world.room.id, hunting_room: @policy.hunting_room) if @trip.nil?
           case EO::Engine::Travel.step(self, @travel, @policy.hunting_room, world)
           when :underway then return nil
@@ -376,10 +382,20 @@ module EO::Engine
         step = @walker.next_step(world)
         return Actions::Result.new(status: :failed, reason: :no_exit) if step.nil?
 
-        Actions::Move.new(world, way: step.last).call
+        move_step(world, step.last)
       end
 
       private
+
+      def move_step(world, way)
+        return Actions::Move.new(world, way: way).call unless @movement&.strict_movement?
+
+        result = Actions::GroupMove.new(world, way: way, leader: @movement).call
+        if %i[unsupported_group_exit unsupported_movement_guard].include?(result.reason)
+          Events.emit(:coordination_return_required, reason: result.reason, room: world.room.id)
+        end
+        result
+      end
 
       # nil == nil read as blocked in an unmapped room; see engage.rb.
       def combat_blocked_here?(world)

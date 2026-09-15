@@ -103,10 +103,23 @@ RSpec.describe 'EOHunter wiring' do
     expect(behaviors[:counters]).not_to be_nil
   end
 
+  it 'passes the same exact child adapter to follower travel and cleanup consumers' do
+    member = instance_double(EO::Engine::Group::Member)
+    scripts = double('exact owned children')
+    behaviors = wiring.build_follower(profile, world, member, scripts: scripts)
+
+    expect(behaviors[:rest].instance_variable_get(:@scripts)).to equal(scripts)
+    expect(behaviors[:loot].instance_variable_get(:@scripts)).to equal(scripts)
+    travel = behaviors[:wander].instance_variable_get(:@travel)
+    trip = travel.call(2)
+    expect(trip).to be_a(EO::Engine::Travel::Trip)
+    expect(trip.instance_variable_get(:@scripts)).to equal(scripts)
+  end
+
   it 'adds the leader-only Muster when leading, and not when solo' do
     expect(wiring.build(profile, world)[:muster]).to be_nil
 
-    leader = instance_double(EO::Engine::Group::Leader)
+    leader = instance_double(EO::Engine::Group::Leader, strict_movement?: false)
     behaviors = wiring.build(profile, world, leader: leader)
     expect(behaviors[:muster]).not_to be_nil
     expect(behaviors[:muster].priority).to eq(15)

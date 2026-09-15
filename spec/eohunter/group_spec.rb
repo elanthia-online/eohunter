@@ -734,6 +734,84 @@ RSpec.describe EO::Engine::Behaviors::Follow do
     expect(trips).to eq([9])
   end
 
+  it 'does not backtrack to a stale leader room when group movement completes during its room read' do
+    hub.heartbeat!(name: 'Lead', room: 32763, phase: :hunting)
+    member.leader_state
+    game_objects = OpenStruct.new(pcs: [])
+    current_room = OpenStruct.new(id: 32764)
+    map = double('native Map')
+    # The PC list and mapped room are live readers. The next room read
+    # completes the group arrival after Follow first saw no leader.
+    allow(map).to receive(:current) do
+      game_objects.pcs = [player('Lead')]
+      current_room
+    end
+    native_world = EO::Engine::World.new
+    allow(native_world).to receive_messages(gameobj: game_objects, map: map,
+                                            me: world.me, group_leader_noun: 'Lead', group_nouns: ['Lead'])
+    scripts = double('owned travel scripts', running?: false)
+    allow(scripts).to receive(:start)
+    native_follow = described_class.new(member: member,
+                                        travel: ->(destination) { EO::Engine::Travel::Trip.new(destination, scripts: scripts, unhide: false) })
+
+    native_follow.tick(native_world)
+
+    expect(native_world.room.players.map(&:noun)).to eq(['Lead'])
+    expect(scripts).not_to have_received(:start)
+  ensure
+    native_follow&.cancel!
+  end
+
+  it 'cancels its owned catch-up trip before rejoining a leader who has arrived' do
+    scripts = double('owned travel scripts', running?: true, start: nil, kill: nil)
+    native_follow = described_class.new(member: member,
+                                        travel: ->(destination) { EO::Engine::Travel::Trip.new(destination, scripts: scripts, unhide: false) })
+    room.players = []
+    world[:group_leader_noun] = nil
+    native_follow.tick(world)
+    expect(EO::Engine::Travel.underway?).to be true
+
+    room.players = [player('Lead')]
+    expect(EO::Engine::Actions::Join).to receive(:new).with(world, leader: 'Lead') do
+      expect(scripts).to have_received(:kill).with('go2').once
+      expect(EO::Engine::Travel.active).to be_nil
+      double(call: EO::Engine::Actions::Result.new(status: :success))
+    end
+    native_follow.tick(world)
+    world[:group_leader_noun] = 'Lead'
+    expect(native_follow.wants_control?(world)).to be false
+    expect(scripts).to have_received(:start).once
+  ensure
+    native_follow&.cancel!
+  end
+
+  it 'waits for native trip arrival cleanup before joining the leader at its destination' do
+    scripts = double('owned travel scripts', running?: true, start: nil, kill: nil)
+    native_follow = described_class.new(member: member,
+                                        travel: ->(destination) { EO::Engine::Travel::Trip.new(destination, scripts: scripts, unhide: false) })
+    room.players = []
+    world[:group_leader_noun] = nil
+    native_follow.tick(world)
+    room.id = 9
+    room.players = [player('Lead')]
+    allow(EO::Engine::Actions::Join).to receive(:new).and_return(
+      double(call: EO::Engine::Actions::Result.new(status: :success))
+    )
+
+    expect(native_follow.tick(world)).to be_nil
+    expect(EO::Engine::Travel.underway?).to be true
+    expect(scripts).not_to have_received(:kill)
+    expect(EO::Engine::Actions::Join).not_to have_received(:new)
+
+    allow(scripts).to receive(:running?).and_return(false)
+    expect(native_follow.tick(world).success?).to be true
+    expect(EO::Engine::Travel.active).to be_nil
+    expect(EO::Engine::Actions::Join).to have_received(:new).once
+    expect(scripts).to have_received(:start).once
+  ensure
+    native_follow&.cancel!
+  end
+
   it 'waits out its own roundtime before trying to catch the leader' do
     room.players = []
     world.me[:in_rt?] = true
