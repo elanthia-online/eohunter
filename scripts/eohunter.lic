@@ -109,6 +109,8 @@ module EOHunter
   RALLY_TIMEOUT = 60 # bigshot head 9897
   # Seconds between rally whispers (bigshot head 9899).
   RALLY_EVERY = 3 # bigshot head 9899
+  # Independently distributed coordination-library API consumed by strict mode.
+  COORDINATION_LIBRARY_VERSION = E::Coordination::LIBRARY_VERSION
   # The leader's rally whisper, capturing the DRb uri.
   RALLY_LINE = %r{eohunter rallying at (druby://[^\s"<]+?)\.?["<]}i
 
@@ -117,6 +119,17 @@ module EOHunter
   # @param text [String]
   # @return [void]
   def self.msg(kind, text) = Lich::Messaging.msg(kind, "eohunter: #{text}")
+
+  # Load the optional coordination library only for features that consume it.
+  # Ordinary solo and legacy group hunts retain their existing dependencies.
+  # @return [Module] EO::Coordination
+  def self.load_coordination_library
+    Script.loadlib('libeocoordination') unless defined?(::EO::Coordination::ParserProjection)
+    ::EO::Coordination.require_version(COORDINATION_LIBRARY_VERSION)
+    ::EO::Coordination
+  rescue StandardError => e
+    raise ArgumentError, "strict coordination requires libeocoordination #{COORDINATION_LIBRARY_VERSION}: #{e.message}"
+  end
 
   # Where this character's bigshot profile lives.
   # @param name [String] the profile name
@@ -555,6 +568,21 @@ module EOHunter
     end
   end
 
+  # Install libeocoordination's passive parser projection. It composes Lich's
+  # existing SocketReadHook and DownstreamHook and supplies only a version fence
+  # around existing World policy; the publication never decides movement.
+  #
+  # @return [#call] returns the current frozen parser sample or nil
+  def self.group_native_reader
+    coordination = load_coordination_library
+    projection = coordination::ParserProjection.new
+    projection.install!
+    projection
+  rescue StandardError
+    projection&.close
+    raise
+  end
+
   # bigshot head: group open, serve the hub, whisper the uri
   # to the group until everyone expected has registered. Exits the script
   # with no group to lead or when the rally times out.
@@ -574,45 +602,59 @@ module EOHunter
       raise ArgumentError, 'strict group movement requires explicit follower names on this machine: head <name> <name>'
     end
     identity_reader = group_identity_reader if strict
-    E::Actions::GroupOpen.new(world).call
-    E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
-    expected = if args.first.to_s =~ /\A\d+\z/ then args.first.to_i
-               elsif args.any? then args.map { |n| n.to_s.capitalize }
-               else
-                 Lich::Gemstone::Group.check
-                 world.group_nouns.size
-               end
-    if expected == 0 || (expected.is_a?(Array) && expected.empty?)
-      msg('error', 'no group to lead: ;eohunter <profile> head <count> or head <name> <name>')
-      exit
-    end
-    hub = E::Group::Hub.new(strict_movement: strict, identity_reader: identity_reader)
-    # A nil URI binds every interface, so anyone who can reach the port
-    # can drive a follower through the Hub: it answers orders with no
-    # authentication, and Order carries a :command type that runs an
-    # arbitrary game command (group.rb 1302). Nothing in the engine ever
-    # sends that order - the leader has fourteen types and :command is
-    # not among them - so the exposure is the whole reachable surface,
-    # not one handler. Loopback by default; 'lan' opts back in.
-    DRb.start_service(lan ? nil : 'druby://127.0.0.1:0', hub)
-    uri = DRb.uri
-    rooms = { rally: profile['rallypoint_room_ids'], hunting: profile['hunting_room_id'],
-              waypoints: profile['return_waypoint_ids'], resting: profile['resting_room_id'] }
-    hub.open_hunt(leader: Char.name, expected: expected, rooms: rooms)
-    msg('info', "leading #{expected.is_a?(Integer) ? "#{expected} followers" : expected.join(', ')}; rallying at #{uri}")
-    deadline = Time.now + RALLY_TIMEOUT
-    until hub.ready?
-      if Time.now > deadline
-        msg('error', "rally timed out; missing: #{hub.missing.join(', ')}")
+    native_reader = nil
+    service_started = false
+    transferred = false
+    begin
+      E::Actions::GroupOpen.new(world).call
+      E::Actions::Command.new(world, command: 'unhide').call if world.me.hidden?
+      expected = if args.first.to_s =~ /\A\d+\z/ then args.first.to_i
+                 elsif args.any? then args.map { |n| n.to_s.capitalize }
+                 else
+                   Lich::Gemstone::Group.check
+                   world.group_nouns.size
+                 end
+      if expected == 0 || (expected.is_a?(Array) && expected.empty?)
+        msg('error', 'no group to lead: ;eohunter <profile> head <count> or head <name> <name>')
         exit
       end
-      Lich::Util.issue_command("whisper ooc group eohunter rallying at #{uri}", /<pushStream id="speech"/, silent: true, quiet: false)
-      sleep RALLY_EVERY
+      hub = E::Group::Hub.new(strict_movement: strict, identity_reader: identity_reader)
+      # A nil URI binds every interface, so anyone who can reach the port
+      # can drive a follower through the Hub: it answers orders with no
+      # authentication, and Order carries a :command type that runs an
+      # arbitrary game command (Group::Orders#apply). Nothing in the engine
+      # sends that order - the leader has fourteen types and :command is
+      # not among them - so the exposure is the whole reachable surface,
+      # not one handler. Loopback by default; 'lan' opts back in.
+      DRb.start_service(lan ? nil : 'druby://127.0.0.1:0', hub)
+      service_started = true
+      uri = DRb.uri
+      rooms = { rally: profile['rallypoint_room_ids'], hunting: profile['hunting_room_id'],
+                waypoints: profile['return_waypoint_ids'], resting: profile['resting_room_id'] }
+      hub.open_hunt(leader: Char.name, expected: expected, rooms: rooms)
+      msg('info', "leading #{expected.is_a?(Integer) ? "#{expected} followers" : expected.join(', ')}; rallying at #{uri}")
+      deadline = Time.now + RALLY_TIMEOUT
+      until hub.ready?
+        if Time.now > deadline
+          msg('error', "rally timed out; missing: #{hub.missing.join(', ')}")
+          exit
+        end
+        Lich::Util.issue_command("whisper ooc group eohunter rallying at #{uri}", /<pushStream id="speech"/, silent: true, quiet: false)
+        sleep RALLY_EVERY
+      end
+      hub.activate!
+      msg('info', "group: #{hub.members.join(', ')}")
+      native_reader = group_native_reader if strict
+      leader = E::Group::Leader.new(hub, name: Char.name, policy: profile.group_policy,
+                                    strict_movement: strict, identity_reader: identity_reader, native_reader: native_reader)
+      transferred = true
+      leader
+    ensure
+      unless transferred
+        native_reader&.close
+        DRb.stop_service if service_started
+      end
     end
-    hub.activate!
-    msg('info', "group: #{hub.members.join(', ')}")
-    E::Group::Leader.new(hub, name: Char.name, policy: profile.group_policy,
-                          strict_movement: strict, identity_reader: identity_reader)
   end
 
   # bigshot tail: the rally whisper names the uri unless
@@ -626,7 +668,6 @@ module EOHunter
   # @return [E::Group::Member] our registration, once the hunt is active
   #   or the wait for it timed out
   def self.follow(args, strict_movement: false)
-    identity_reader = group_identity_reader if strict_movement
     uri = args.first.to_s =~ %r{\Adruby://} ? args.first : nil
     unless uri
       hook = proc do |line|
@@ -634,10 +675,13 @@ module EOHunter
         line
       end
       DownstreamHook.add('eohunter::rally', hook)
-      msg('info', 'waiting for the leader\'s rally whisper')
-      deadline = Time.now + RALLY_TIMEOUT * 2
-      sleep 0.5 while uri.nil? && Time.now < deadline
-      DownstreamHook.remove('eohunter::rally')
+      begin
+        msg('info', 'waiting for the leader\'s rally whisper')
+        deadline = Time.now + RALLY_TIMEOUT * 2
+        sleep 0.5 while uri.nil? && Time.now < deadline
+      ensure
+        DownstreamHook.remove('eohunter::rally')
+      end
       if uri.nil?
         msg('error', 'no rally whisper seen; ;eohunter <profile> tail <uri> names it')
         exit
@@ -646,26 +690,41 @@ module EOHunter
     if strict_movement && !uri.to_s.match?(%r{\Adruby://127\.0\.0\.1:[0-9]+\z})
       raise ArgumentError, 'strict group movement accepts only a local loopback leader'
     end
-    DRb.start_service
-    hub = DRbObject.new_with_uri(uri)
-    member = E::Group::Member.new(hub, name: Char.name, strict_movement: strict_movement, identity_reader: identity_reader)
-    msg('info', "joining the group at #{uri}")
-    120.times do
-      break if member.register
-      if member.lost?
-        msg('error', 'the leader is not answering')
+    identity_reader = group_identity_reader if strict_movement
+    native_reader = nil
+    service_started = false
+    transferred = false
+    begin
+      native_reader = group_native_reader if strict_movement
+      DRb.start_service
+      service_started = true
+      hub = DRbObject.new_with_uri(uri)
+      member = E::Group::Member.new(hub, name: Char.name, strict_movement: strict_movement,
+                                    identity_reader: identity_reader, native_reader: native_reader)
+      msg('info', "joining the group at #{uri}")
+      120.times do
+        break if member.register
+        if member.lost?
+          msg('error', 'the leader is not answering')
+          exit
+        end
+        sleep 0.5
+      end
+      unless member.registered?
+        msg('error', 'could not join the hunt')
         exit
       end
-      sleep 0.5
+      msg('info', "joined #{member.leader_name}'s hunt #{member.hunt_id}; waiting for the start")
+      deadline = Time.now + RALLY_TIMEOUT * 2
+      sleep 0.5 until (hub.active? rescue false) || Time.now > deadline
+      transferred = true
+      member
+    ensure
+      unless transferred
+        native_reader&.close
+        DRb.stop_service if service_started
+      end
     end
-    unless member.registered?
-      msg('error', 'could not join the hunt')
-      exit
-    end
-    msg('info', "joined #{member.leader_name}'s hunt #{member.hunt_id}; waiting for the start")
-    deadline = Time.now + RALLY_TIMEOUT * 2
-    sleep 0.5 until (hub.active? rescue false) || Time.now > deadline
-    member
   end
 end
 
@@ -745,6 +804,28 @@ profile.validate_rest_mode!(mode, controlled: !controlled.nil?, bounty: bounty_m
 if mode == 'tail'
   exit if dry
   member = EOHunter.follow(mode_args, strict_movement: profile['group_strict_movement'])
+  engine = nil
+  before_dying do
+    begin
+      engine&.stop!(:script_killed)
+    ensure
+      begin
+        member.stop_pulse!
+      ensure
+        begin
+          # The follower's service must close even if later startup fails.
+          DRb.stop_service
+        ensure
+          begin
+            member.native_reader.close if member.native_reader.respond_to?(:close)
+          ensure
+            EO::Engine::Watch.uninstall!
+            EO::Engine::Events.reset!
+          end
+        end
+      end
+    end
+  end
   behaviors = EOHunter.build_follower(profile, world, member)
   engine = EO::Engine::Engine.new(world: world, behaviors: behaviors.values_at(:survival, :cleanse, :flee, :rest, :loot, :loadout, :maintain, :engage, :wander))
   EOHunter.wire(engine, behaviors)
@@ -767,20 +848,47 @@ if mode == 'tail'
   member.keep_alive!
   # the watch, from the running script (Lich removes a dead script's hooks)
   EO::Engine::Watch.install!
-  before_dying do
-    engine.stop!(:script_killed)
-    member.stop_pulse!
-    # the follower's own service, started at the join above
-    DRb.stop_service
-    EO::Engine::Watch.uninstall!
-    EO::Engine::Events.reset!
-  end
   engine.run
   member.stop_pulse!
   exit
 end
 
 leader = mode == 'head' && !dry ? EOHunter.lead(profile, world, mode_args) : nil
+engine = nil
+unless dry
+  before_dying do
+    # Register before building behaviors: rejected startup still owns the
+    # leader's listener and parser projection. Native Script owns teardown.
+    # Its workers are already dead here, so acknowledged shutdown belongs
+    # in the normal run path while followers can still answer.
+    begin
+      engine&.stop!(:script_killed)
+    ensure
+      begin
+        leader&.stop_pulse!
+      ensure
+        begin
+          leader&.finish!(engine&.stop_reason || :script_killed)
+        ensure
+          begin
+            # DRb.start_service replaces the primary without closing its listener.
+            DRb.stop_service if leader
+            fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot
+          ensure
+            reader = leader&.native_reader
+            begin
+              reader.close if reader.respond_to?(:close)
+            ensure
+              EO::Engine::Watch.uninstall!
+              EO::Engine::Events.reset!
+              EO::Engine::Actions::Base.interrupt = nil
+            end
+          end
+        end
+      end
+    end
+  end
+end
 owner = Script.current
 if controlled
   token = "#{Process.pid}:#{owner.object_id}:#{Process.clock_gettime(Process::CLOCK_MONOTONIC)}"
@@ -858,34 +966,6 @@ end
 # The watch subscribes to Lich's parser seam from the running script,
 # since Lich removes a dead script's subscriptions and hooks.
 EO::Engine::Watch.install!
-before_dying do
-  # Teardown only. Lich kills the script's worker threads - the DRb server
-  # among them - before it runs these procs (script.rb 2173, then 2191),
-  # so a bounded wait for follower acks here can never collect one: it
-  # spent the full deadline and reported every follower unacked, on a
-  # plain ;kill as much as on a real stop. The acknowledged shutdown runs
-  # from the run path below, while the threads are still alive.
-  engine.stop!(:script_killed)
-  leader&.stop_pulse!
-  # The fallible steps last, each isolated: Lich rescues per proc but not
-  # Interrupt, so a raise or an interrupted sleep here used to skip the
-  # watch teardown and leave tracker handlers building a World per combat
-  # line until the next eohunter start evicted them by name.
-  begin
-    leader&.finish!(engine.stop_reason || :script_killed)
-    # The listening socket outlives the script: DRb.start_service replaces
-    # the primary without closing the old server, so a restart in the same
-    # Lich leaves the previous run's Hub still answering hunt_id, register
-    # and report from a dead roster. stop_service closes the current one.
-    DRb.stop_service if leader
-    fput('movement autosneak off') if profile['sneaky_sneaky'] # bigshot
-  ensure
-    EO::Engine::Watch.uninstall!
-    EO::Engine::Events.reset!
-    # the lambda closes over this run's engine; a restart sets its own
-    EO::Engine::Actions::Base.interrupt = nil
-  end
-end
 
 if controlled
   EOHunter.run_controlled(engine: engine, behaviors: behaviors, world: world, owner: owner,

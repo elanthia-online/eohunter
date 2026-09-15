@@ -22,7 +22,7 @@ RSpec.describe 'EOHunter.wire' do
   end
 
   it 'clears the interrupt on teardown, since it closes over this run' do
-    teardown = source[/^before_dying do\n.*?\n^end\n/m]
+    teardown = source[/^unless dry\n  before_dying do\n.*?\n^end\n/m]
     expect(teardown).to include('Actions::Base.interrupt = nil')
   end
 end

@@ -42,8 +42,11 @@ RSpec.describe 'Strict group movement across processes' do
   def child_owner(input, output)
     start = receive_message(input)
     identity = { game: 'TEST', character: 'Bob', incarnation: 'child', connection_generation: 1, run_id: 'child-run' }.freeze
+    native = { source: { connection_id: 'child-native', sequence: 1, received_at: 100.0 },
+               fields: { room: { value: { uid: 1, epoch: 80 } } } }.freeze
     member = EO::Engine::Group::Member.new(DRbObject.new_with_uri(start.fetch(:uri)), name: 'Bob',
-                                          strict_movement: true, identity_reader: -> { identity }, deadline: 0.5)
+                                          strict_movement: true, identity_reader: -> { identity },
+                                          native_reader: -> { native }, deadline: 0.5)
     orders = {}
     send_message(output, pid: Process.pid)
     loop do
@@ -77,8 +80,11 @@ RSpec.describe 'Strict group movement across processes' do
     identity = { game: 'TEST', character: 'Lead', incarnation: 'parent', connection_generation: 1, run_id: 'parent-run' }.freeze
     @hub = EO::Engine::Group::Hub.new(strict_movement: true, identity_reader: -> { identity }, monotonic: -> { @time.first })
     @hub.open_hunt(leader: 'Lead', expected: expected)
+    native = { source: { connection_id: 'parent-native', sequence: 1, received_at: 100.0 },
+               fields: { room: { value: { uid: 1, epoch: 10 } } } }.freeze
     @leader = EO::Engine::Group::Leader.new(@hub, name: 'Lead', strict_movement: true, identity_reader: -> { identity },
-                                          movement_idle: ->(_world) { true }, monotonic: -> { @time.first })
+                                          native_reader: -> { native }, movement_idle: ->(_world) { true },
+                                          monotonic: -> { @time.first })
     @world = OpenStruct.new(room: OpenStruct.new(id: 1, count: 10, players: expected.map { |name| OpenStruct.new(noun: name) }),
                             me: OpenStruct.new(in_rt?: false, in_cast_rt?: false, dead?: false, muckled?: false), group_nouns: expected)
     @leader.complete_owner_tick(@world, 1, state: :running)

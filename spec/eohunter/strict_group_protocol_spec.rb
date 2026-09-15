@@ -7,15 +7,22 @@ RSpec.describe 'Strict group movement protocol' do
   let(:time) { [100.0] }
   let(:leader_identity) { [{ run: 'leader-run', incarnation: 'leader-process', connection_generation: 1 }] }
   let(:member_identity) { [{ run: 'member-run', incarnation: 'member-process', connection_generation: 7 }] }
+  let(:native_state) do
+    [{ source: { connection_id: 'native-test', sequence: 1, received_at: 100.0 },
+       fields: { room: { value: { uid: 1, epoch: 10 } } } }.freeze]
+  end
+  let(:native_reader) { -> { native_state.first } }
   let(:hub) do
     EO::Engine::Group::Hub.new(strict_movement: true, identity_reader: -> { leader_identity.first }, monotonic: -> { time.first })
   end
   let(:leader) do
     EO::Engine::Group::Leader.new(hub, name: 'Lead', strict_movement: true,
-                                 identity_reader: -> { leader_identity.first }, movement_idle: ->(_world) { true }, monotonic: -> { time.first })
+                                 identity_reader: -> { leader_identity.first }, native_reader: native_reader,
+                                 movement_idle: ->(_world) { true }, monotonic: -> { time.first })
   end
   let(:member) do
-    EO::Engine::Group::Member.new(hub, name: 'Bob', strict_movement: true, identity_reader: -> { member_identity.first })
+    EO::Engine::Group::Member.new(hub, name: 'Bob', strict_movement: true,
+                                 identity_reader: -> { member_identity.first }, native_reader: native_reader)
   end
   let(:world) do
     OpenStruct.new(room: OpenStruct.new(id: 1, count: 10, players: [OpenStruct.new(noun: 'Bob')]),
@@ -178,6 +185,18 @@ RSpec.describe 'Strict group movement protocol' do
     expect(leader.movement_pending?).to be false
   end
 
+  it 'withdraws leader and follower liveness after either exact identity changes' do
+    expect(leader.publish(world, phase: :hunting)).to be true
+    expect(member.report(EO::Engine::Group::Report.new(name: 'Bob', room: 1, rt: false))).to be true
+
+    leader_identity[0] = leader_identity.first.merge(connection_generation: 2)
+    member_identity[0] = member_identity.first.merge(connection_generation: 8)
+
+    expect(leader.publish(world, phase: :hunting)).to be false
+    expect(member.report(EO::Engine::Group::Report.new(name: 'Bob', room: 1, rt: false))).to be false
+    expect(member.lost?).to be true
+  end
+
   it 'copies participant identities before a caller can mutate them' do
     member_identity.first[:run] = 'different'
     expect(acknowledge(prepare)).to be false
@@ -186,14 +205,16 @@ RSpec.describe 'Strict group movement protocol' do
   it 'cannot register a strict member with a legacy hub' do
     legacy = EO::Engine::Group::Hub.new
     legacy.open_hunt(leader: 'Lead', expected: ['Bob'])
-    strict = EO::Engine::Group::Member.new(legacy, name: 'Bob', strict_movement: true, identity_reader: -> { member_identity.first })
+    strict = EO::Engine::Group::Member.new(legacy, name: 'Bob', strict_movement: true,
+                                          identity_reader: -> { member_identity.first }, native_reader: native_reader)
     expect(strict.register).to be false
     expect(legacy.members).to be_empty
   end
 
   it 'requires local cleanup authority to be bound and rechecks it on consumption' do
     unbound = EO::Engine::Group::Leader.new(hub, name: 'Lead', strict_movement: true,
-                                          identity_reader: -> { leader_identity.first }, monotonic: -> { time.first })
+                                          identity_reader: -> { leader_identity.first }, native_reader: native_reader,
+                                          monotonic: -> { time.first })
     unbound.complete_owner_tick(world, 1, state: :running)
     expect(acknowledge(prepare)).to be true
     expect(unbound.movement_ready?(world)).to be false
@@ -213,5 +234,23 @@ RSpec.describe 'Strict group movement protocol' do
     hub.open_hunt(leader: 'Lead', expected: ['Bob'])
     expect(member.register).to be true
     expect(acknowledge(order, tick: 3)).to be false
+  end
+
+  it 'rejects a movement decision when native publication changes during policy reads' do
+    order = prepare
+    expect(acknowledge(order)).to be true
+    replacement = native_state.first.merge(source: native_state.first[:source].merge(sequence: 2)).freeze
+    leader.movement_idle = lambda do |_world|
+      native_state[0] = replacement
+      true
+    end
+    expect(leader.consume_movement!(world)).to be false
+  end
+
+  it 'rejects a native room publication from another room incarnation' do
+    order = prepare
+    expect(acknowledge(order)).to be true
+    native_state[0] = native_state.first.merge(fields: { room: { value: { uid: 1, epoch: 9 } } }).freeze
+    expect(leader.consume_movement!(world)).to be false
   end
 end
