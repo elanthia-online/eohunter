@@ -92,7 +92,7 @@ RSpec.describe 'EOHunter wiring' do
   end
 
   it 'builds a follower with Orders, Assist and Follow in place of Rest, Engage and Wander' do
-    member = instance_double(EO::Engine::Group::Member, strict_movement?: false)
+    member = instance_double(EO::Engine::Group::Member, strict_movement?: false, native_reader: nil)
     behaviors = wiring.build_follower(profile, world, member)
 
     expect(behaviors[:rest]).to be_a(EO::Engine::Behaviors::Orders)
@@ -104,7 +104,7 @@ RSpec.describe 'EOHunter wiring' do
   end
 
   it 'passes the same exact child adapter to follower travel and cleanup consumers' do
-    member = instance_double(EO::Engine::Group::Member, strict_movement?: false)
+    member = instance_double(EO::Engine::Group::Member, strict_movement?: false, native_reader: nil)
     scripts = double('exact owned children')
     behaviors = wiring.build_follower(profile, world, member, scripts: scripts)
 
@@ -144,6 +144,13 @@ RSpec.describe 'EOHunter wiring' do
   # The profile name is the first script argument, interpolated whole into
   # a path. `;eohunter ../../../../etc/passwd` read any YAML on disk.
   describe '.profile_path' do
+    it 'selects an EOHunter-owned copy before a same-named legacy profile' do
+      native = File.join(DATA_DIR, XMLData.game, Char.name, 'eohunter', 'profiles', 'usual.yaml')
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:exist?).with(native).and_return(true)
+      expect(wiring.profile_path('usual')).to eq(native)
+    end
+
     it 'keeps an ordinary name untouched' do
       expect(wiring.profile_path('ojandhaart')).to end_with('bigshot_profiles/ojandhaart.yaml')
       expect(wiring.profile_path('my profile')).to end_with('bigshot_profiles/my profile.yaml')

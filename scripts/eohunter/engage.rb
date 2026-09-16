@@ -210,6 +210,10 @@ module EO::Engine
 
     # The routine compiler: profile entries to Lines.
     module Routine
+      # Opt-in cursor retention, not a blocking loop. Conditions and the engine
+      # priority scheduler still run between every action. Failed/skipped steps
+      # advance normally so this cannot trap a routine on an unavailable action.
+      REPEAT_UNTIL_TARGET_GONE = 'untildead'
       # bigshot COMMAND_MODIFIER_REGEX, reduced to "the trailing
       # parenthesis holds the modifiers"; each known word is checked in
       # Conditions, unknown words are reported and ignored.
@@ -1026,6 +1030,8 @@ module EO::Engine
           # The successful TARGET used this tick's send. Keep a named
           # preparation pending so its consumptive command gets its own tick.
           return probe if probe && named_preparation?(@routine[@cursor]&.text)
+        elsif @routine_disabled != disabled_routine?
+          select_routine
         end
         @on_fight&.call
         called = call_followers(world)
@@ -1035,7 +1041,8 @@ module EO::Engine
         line = @routine[@cursor]
         result = run_line(world, line)
         held_preparation = named_preparation?(line.text) && result&.skipped? && result.reason != :condition
-        @cursor = (@cursor + 1) % @routine.size unless held_preparation
+        repeat_target = result&.success? && line.modifiers.any? { |mod| mod.casecmp?(EO::Engine::Engage::Routine::REPEAT_UNTIL_TARGET_GONE) }
+        @cursor = (@cursor + 1) % @routine.size unless held_preparation || repeat_target
         result
       end
 
@@ -1049,6 +1056,14 @@ module EO::Engine
       MAX_ROUTINE_SLEEP = 60
 
       def grouped? = !@group.nil? && !@group.solo?
+
+      # Followers participate in routine selection without gaining the
+      # leader-only ability to issue attack or recall orders.
+      def grouped_for_routines? = grouped?
+
+      def disabled_routine?
+        grouped_for_routines? && Array(@policy.disable_commands).any? && @fried.call
+      end
 
       # One pending boon assessment in this room, as the tick's action.
       def assess_boons(world)
@@ -1073,17 +1088,19 @@ module EO::Engine
         letter = @policy.quick ? 'quick' : Targets.routine_for(creature, @targets_policy)
         letter = @routine_selector.call(creature, letter) if @routine_selector
         @routine_letter = letter
-        list = if grouped? && @fried.call && Array(@policy.disable_commands).any?
-                 letter = 'disabled'
-                 @policy.disable_commands
-               else
-                 @policy.routine_for(letter)
-               end
+        select_routine
+        order_attack(world)
+      end
+
+      # Re-evaluate the configured fried routine without changing the target,
+      # resending group orders, or resetting per-target modifier history.
+      def select_routine
+        @routine_disabled = disabled_routine?
+        list = @routine_disabled ? @policy.disable_commands : @policy.routine_for(@routine_letter)
         @routine = EO::Engine::Engage::Routine.parse(list)
         @cursor = 0
         @ambush_cursor = 0
-        Events.emit(:engaged, target: creature.id, name: creature.name, routine: letter)
-        order_attack(world)
+        Events.emit(:engaged, target: @target.id, name: @target.name, routine: @routine_disabled ? 'disabled' : @routine_letter)
       end
 
       def order_attack(world)

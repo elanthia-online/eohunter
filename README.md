@@ -1,5 +1,10 @@
 # eohunter
 
+> **Development prototype — not ready for formal review or merge.**
+> This branch is shared for visibility and discussion, not production release.
+> Interfaces, profile format and area data may still change.
+> See [prototype status and open work](docs/setup-implementation-status.md).
+
 A hunting script for Gemstone IV on Lich 5, built as an engine of small
 behaviors rather than one long loop. It reads bigshot profiles unchanged,
 so an existing profile runs here without edits, and it folds ecleanse in
@@ -7,8 +12,14 @@ as one of its behaviors.
 
 ## Running it
 
+The development browser editor is available through `;eohunter setup`.
+See [Browser setup](docs/guides/setup.md) for installation, native profile
+storage, compatibility behavior and current preview limitations. It never
+starts a hunt or edits Bigshot/ecleanse files.
+
 ```
-;eohunter <profile>                    hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
+;eohunter setup                        open the local browser editor
+;eohunter <profile>                    hunt with a native profile, falling back to bigshot_profiles
 ;eohunter <profile> dry                load the profile, report the policies, do not run
 ;eohunter <profile> bandits            hunt bandits (also on in bounty mode when the bounty says so)
 ;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
@@ -25,8 +36,9 @@ Combat::Messages, #1587 bounded fput). Until they merge that is the
 eohunter test package at github.com/Nisugi/lich-5/releases: Lich 5.20.1
 with the nine merged, the script, and an effect-list that marks Briar
 Betrayer refreshable. The script refuses to start on a Lich without them.
-Cleanse reads `data/<game>/<char>/ecleanse.yaml`, which ecleanse's own
-setup window writes. A profile's `troubadours_rally`, `signs` entries such as
+Cleanse accepts Hunter-owned `recovery` settings, with read-only fallback to
+`data/<game>/<char>/ecleanse.yaml`, which ecleanse's own setup window writes.
+A profile's `troubadours_rally`, `signs` entries such as
 `650 panther evoke`, and `quick_commands` (used by bandit mode) all work
 as they do in bigshot.
 
@@ -51,7 +63,7 @@ refreshes the leader's room, travels back, and rejoins automatically.
 `group_fried_trigger` defaults to `any`, so any live member reaching
 their own configured `fried` threshold brings the group home. Set it to
 `all` to wait for every live member, or give one or more names such as
-`Skooshii` or `Skooshii, Calvix`. Named matching is case-insensitive.
+`Testfollower` or `Testfollower, Testleader`. Named matching is case-insensitive.
 Non-mind rest reasons still return immediately regardless of this setting.
 
 The `deader` setting stops for dead players during the hunting phase. Unrelated
@@ -216,6 +228,7 @@ line reference.
 - [Getting started](docs/guides/getting-started.md): install, the dry run, the modes, how it stops
 - [Profiles](docs/guides/profiles.md): every bigshot profile key the engine honours, its type, default and reader
 - [Combat buff policy](docs/guides/combat-buffs.md): opt-in native restoration, safe recovery, and verified departure requirements
+- [Multi-account group startup](docs/guides/multi-account-group.md): opt-in followers, one-command party startup, local supervision, and safe return
 - [The routine language](docs/guides/routines.md): the words, the spell syntax, the maneuvers, every modifier
 - [Architecture](docs/guides/architecture.md): the pieces, the tick, actions, World, events, travel, groups, the watchdogs
 - [Extending the engine](docs/guides/extending.md): adding an action, a routine word, a behavior, a World reader
