@@ -12,6 +12,19 @@ task :build do
   end
 end
 
+desc 'Build the eohunter gem into dist/'
+task :gem do
+  require 'fileutils'
+  require 'rubygems/package'
+  spec = Gem::Specification.load(File.join(__dir__, 'eohunter.gemspec'))
+  FileUtils.mkdir_p(File.join(__dir__, 'dist'))
+  Dir.chdir(__dir__) do
+    file = Gem::Package.build(spec)
+    FileUtils.mv(file, File.join('dist', file))
+    puts "built dist/#{file} (#{spec.files.size} files)"
+  end
+end
+
 desc 'Remove dist/'
 task :clean do
   require 'fileutils'

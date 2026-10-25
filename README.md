@@ -5,6 +5,28 @@ behaviors rather than one long loop. It reads bigshot profiles unchanged,
 so an existing profile runs here without edits, and it folds ecleanse in
 as one of its behaviors.
 
+## Installing
+
+eohunter needs Lich 5.22.0 or later. It installs as a Ruby gem that copies
+the scripts into Lich:
+
+```
+gem install eohunter
+eohunter install
+```
+
+`eohunter install` finds Lich (from `--lich-dir <path>`, else `LICH_DIR`,
+else the usual places) and copies `eohunter.lic`, its `eohunter/` parts and
+the coordination library into Lich's `scripts/`. Any Ruby works for this,
+not only Lich's own. To upgrade, `gem update eohunter` and run
+`eohunter install` again: files a newer version dropped are removed.
+`eohunter doctor` shows the Lich it found, its version, and what is
+installed; `eohunter uninstall` removes exactly what install put there.
+Profiles and settings under `data/` are never touched.
+
+Until the gem is on rubygems.org, each GitHub release carries the
+`.gem` file: download it and `gem install ./eohunter-<version>.gem`.
+
 ## Running it
 
 ```
@@ -227,6 +249,17 @@ line reference.
 - [Troubleshooting](docs/guides/troubleshooting.md): the lines, the stops, common causes, what to report
 - [Contributing](docs/guides/contributing.md): the flow, the conventions, review
 - [Core dependencies](docs/guides/core-dependencies.md): what the engine uses from Lich, and the lich-5 PRs it came from
+
+## Building the gem
+
+`bundle exec rake gem` builds `dist/eohunter-<version>.gem` from
+`eohunter.gemspec`: the installer (`lib/eohunter/install.rb`,
+`exe/eohunter`) and the `scripts/` it copies. The version is
+`EO::Engine::VERSION`, and the Lich it requires is the `required:` line
+of `eohunter.lic`'s header. A release tag attaches the gem to the
+GitHub release, and pushes it to rubygems.org once the repository
+variable `RUBYGEMS_PUSH` is `true` and the `RUBYGEMS_API_KEY` secret is
+set.
 
 ## Building the single-file scripts
 

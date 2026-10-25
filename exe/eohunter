@@ -1,0 +1,80 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# eohunter's installer: puts the scripts this gem carries into Lich.
+#
+#   eohunter install [--lich-dir PATH]
+#   eohunter uninstall [--lich-dir PATH]
+#   eohunter doctor [--lich-dir PATH]
+#   eohunter version
+
+require 'optparse'
+require_relative '../lib/eohunter/install'
+
+install = EOHunter::Install
+options = {}
+parser = OptionParser.new do |opts|
+  opts.banner = <<~TEXT
+    Usage: eohunter <command> [--lich-dir PATH]
+
+    Commands:
+      install     copy eohunter into Lich's scripts/ (also upgrades)
+      uninstall   remove what install put there; your data is untouched
+      doctor      show the Lich found, its version, and what is installed
+      version     print the version this gem carries
+
+    Lich is found from --lich-dir, else LICH_DIR, else the usual places.
+  TEXT
+  opts.on('--lich-dir PATH', 'the Lich directory (where lich.rbw is)') { |path| options[:lich_dir] = path }
+  opts.on('-h', '--help', 'this help') do
+    puts opts
+    exit
+  end
+end
+
+begin
+  command = parser.parse(ARGV).first
+  case command
+  when 'version'
+    puts "eohunter #{install.version} (needs Lich #{install.required_lich} or later)"
+  when 'install'
+    dir = install.find_lich(explicit: options[:lich_dir])
+    result = install.install(dir)
+    puts "installed eohunter #{result[:version]} into #{File.join(dir, 'scripts')} (#{result[:copied].size} files)"
+    puts "removed #{result[:removed].size} files a newer version no longer has" unless result[:removed].empty?
+    unless install.lich_supported?(dir)
+      found = install.lich_version(dir) || 'an unknown version'
+      warn "warning: this Lich is #{found}; eohunter needs #{install.required_lich} or later, and will refuse to start until Lich is updated"
+    end
+    puts 'In the game: ;eohunter setup to make a hunt, ;eohunter <profile> to hunt.'
+  when 'uninstall'
+    dir = install.find_lich(explicit: options[:lich_dir])
+    removed = install.uninstall(dir)
+    puts "removed eohunter from #{File.join(dir, 'scripts')} (#{removed.size} files); profiles and settings under data/ are untouched"
+  when 'doctor'
+    puts "gem:     eohunter #{install.version}, needs Lich #{install.required_lich} or later"
+    dir = install.find_lich(explicit: options[:lich_dir])
+    supported = install.lich_supported?(dir)
+    verdict = if supported.nil?
+                'version unknown'
+              else
+                supported ? 'ok' : 'too old'
+              end
+    puts "lich:    #{dir}, version #{install.lich_version(dir) || 'unknown'} (#{verdict})"
+    state = install.check(dir)
+    if state.nil?
+      puts 'install: none recorded; run eohunter install'
+    else
+      puts "install: eohunter #{state[:version]}" \
+           "#{" (this gem carries #{install.version}; run eohunter install to upgrade)" if state[:version] != install.version}"
+      puts "missing: #{state[:missing].join(', ')}" unless state[:missing].empty?
+      puts "changed since install: #{state[:changed].join(', ')}" unless state[:changed].empty?
+    end
+  else
+    puts parser
+    exit(command.nil? ? 0 : 1)
+  end
+rescue EOHunter::Install::Error, OptionParser::ParseError => e
+  warn "eohunter: #{e.message}"
+  exit 1
+end
