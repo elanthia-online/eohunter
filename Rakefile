@@ -1,17 +1,5 @@
 # frozen_string_literal: true
 
-require_relative 'tools/build'
-require_relative 'tools/build_coordination'
-
-desc 'Build the single-file EOHunter script and coordination library'
-task :build do
-  root = __dir__
-  [EOHunter::Build, EOCoordination::Build].each do |builder|
-    path = builder.write(root: root)
-    puts "built #{path} (#{File.read(path).lines.size} lines), map at #{path}.map"
-  end
-end
-
 desc 'Build the eohunter gem into dist/'
 task :gem do
   require 'fileutils'
@@ -31,7 +19,7 @@ task :clean do
   FileUtils.rm_rf(File.join(__dir__, 'dist'))
 end
 
-task default: :build
+task default: :gem
 
 begin
   require 'yard'

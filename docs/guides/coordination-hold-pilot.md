@@ -88,7 +88,6 @@ Point `EO_COORDINATION_ROOT` at this repository's `scripts` directory:
 ```sh
 EO_COORDINATION_ROOT=/path/to/eohunter/scripts bundle exec rspec
 bundle exec rubocop
-bundle exec rake build
 bundle exec rake doc
 ```
 

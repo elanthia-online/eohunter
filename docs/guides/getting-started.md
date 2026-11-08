@@ -33,14 +33,6 @@ the script, its parts and the coordination library into `scripts/`. To
 upgrade, `gem install` the newer `.gem` and run `eohunter install` again;
 `eohunter doctor` shows what is installed.
 
-From a build: the repo builds one `eohunter.lic` with the engine inlined,
-and `libeocoordination.lic` (see the README section on building). Drop
-`eohunter.lic` into `scripts/`; add `libeocoordination.lic` beside it for
-strict group movement, which loads it. If a `scripts/eohunter/` directory
-from an earlier install is beside it, remove that directory; the built
-file does not read it. The built file has no setup editor: that runs from
-the `scripts/eohunter/` parts.
-
 From the parts: copy `scripts/eohunter.lic`, `scripts/eohunter/`,
 `scripts/libeocoordination.lic` and `scripts/eocoordination/` into Lich's
 `scripts/`.

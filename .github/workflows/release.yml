@@ -1,8 +1,7 @@
 name: release
 
-# A tag like v0.5.1 builds the single-file eohunter.lic and the eohunter
-# gem and attaches them (with the line maps) to a GitHub release of the
-# same name. Players install the gem from the release file; it is not
+# A tag like v0.5.1 builds the eohunter gem and attaches it to a GitHub
+# release of the same name. Players install the gem from the release file; it is not
 # pushed to rubygems.org.
 on:
   push:
@@ -22,9 +21,6 @@ jobs:
           ruby-version: '3.4'
           bundler-cache: true
       - run: bundle exec rspec
-      - run: bundle exec rake build
-      - run: ruby -c dist/eohunter.lic
-      - run: ruby -c dist/libeocoordination.lic
       - run: bundle exec rake gem
       - name: Check the tag matches the engine version
         run: |
@@ -32,10 +28,5 @@ jobs:
           test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} but engine VERSION is $version"; exit 1; }
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          files: |
-            dist/eohunter.lic
-            dist/eohunter.lic.map
-            dist/libeocoordination.lic
-            dist/libeocoordination.lic.map
-            dist/eohunter-*.gem
+          files: dist/eohunter-*.gem
           generate_release_notes: true

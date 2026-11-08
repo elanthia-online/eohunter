@@ -11,10 +11,10 @@ How changes get in, and the conventions every pull request follows.
 - The engine consumes Lich; it does not fork it. A gap in Lich is a
   lich-5 PR to elanthia-online, from a branch on your fork. Never push
   to the elanthia-online remote directly.
-- CI runs the specs, rubocop and the single-file build on every push.
+- CI runs the specs, rubocop and the gem build on every push.
   Green is the bar for review, not a substitute for it.
 - Releases are tags `v<version>` matching `EO::Engine::VERSION`. The
-  release workflow builds the single file, checks the tag matches, and
+  release workflow builds the gem, checks the tag matches, and
   attaches it. The version and the changelog block in `eohunter.lic`'s
   header move together.
 
@@ -70,11 +70,12 @@ cd eohunter
 bundle install
 bundle exec rspec
 bundle exec rubocop
-bundle exec rake build
+bundle exec rake gem
 bundle exec rake doc
 ```
 
 To test in the game, copy `scripts/eohunter.lic` and `scripts/eohunter/`
-into a Lich 5.22.0 or later, or build and drop the single file into
-`scripts/`; strict group movement also needs `libeocoordination.lic`. There is no way to run a hunt outside the game; the
+into a Lich 5.22.0 or later, or build the gem and `eohunter install` it;
+strict group movement also needs `libeocoordination.lic` and
+`scripts/eocoordination/`. There is no way to run a hunt outside the game; the
 specs are the offline check.
