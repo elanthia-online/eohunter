@@ -77,6 +77,17 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(events.first[:reason]).to match(/far too much agony/)
   end
 
+  it 'keeps a follower trip underway on that block, with the status still on the bus' do
+    seen = []
+    EO::Engine::Events.on(:go2_status) { |e| seen << e.data[:cause] }
+    follower = described_class.new(200, scripts: scripts, end_on_block: false)
+    follower.tick(world)
+    EO::Engine::Travel.note_status(go2_status(phase: :blocked, cause: :injured, reason: 'agony'))
+    expect(follower.tick(world)).to be_nil
+    expect(scripts.killed).to be_empty
+    expect(seen).to eq([:injured])
+  end
+
   it 'stays underway on a block go2 clears by itself' do
     trip.tick(world)
     EO::Engine::Travel.note_status(go2_status(phase: :blocked, cause: :roundtime, reason: '...wait 3 seconds.'))

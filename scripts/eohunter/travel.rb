@@ -56,8 +56,12 @@ module EO::Engine
       # @param retry_delay [Numeric] seconds before the next attempt after
       #   a go2 that ended short (a pathing error exits at once)
       # @param clock [#now] the time source; Time, or a fake in specs
-      def initialize(place, scripts: nil, at: nil, unhide: true, attempts: ATTEMPTS, retry_delay: RETRY_DELAY, clock: Time)
+      # @param end_on_block [Boolean] a block walking cannot fix ends the trip.
+      #   A leader's Rest takes over from there; a follower has nothing to
+      #   hand to, so it keeps trying and reports wounds to its leader.
+      def initialize(place, scripts: nil, at: nil, unhide: true, attempts: ATTEMPTS, end_on_block: true, retry_delay: RETRY_DELAY, clock: Time)
         @place = place
+        @end_on_block = end_on_block
         @scripts = scripts || EO::Engine::Behaviors::Rest::LichScripts
         @at = at
         @unhide = unhide
@@ -96,7 +100,7 @@ module EO::Engine
           return finished
         end
 
-        if @started && (blocked = Travel.blocked_status) && terminal?(blocked)
+        if @end_on_block && @started && (blocked = Travel.blocked_status) && terminal?(blocked)
           stop_script
           @started = false
           @status = :failed
