@@ -67,13 +67,6 @@ restarting. The failure is attempted once per hunt, then requests the
 existing return lifecycle. Followers use the leader's resting room;
 a solo profile without one stops with the diagnostic where it is.
 
-## Reading a line number
-
-If you are running the built single file and an error names a line,
-`dist/eohunter.lic.map` (attached to the release beside the script)
-says which part that line is in. Subtract the part's first line to get
-the line within the part.
-
 ## The debug trace
 
 The lines above are what the engine says on its own. The debug trace is

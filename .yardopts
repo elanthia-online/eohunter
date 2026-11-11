@@ -10,8 +10,6 @@ scripts/eohunter.lic
 scripts/eohunter/*.rb
 scripts/libeocoordination.lic
 scripts/eocoordination/*.rb
-tools/build.rb
-tools/build_coordination.rb
 -
 docs/guides/getting-started.md
 docs/guides/profiles.md

@@ -25,8 +25,6 @@ jobs:
           ruby-version: '3.4'
           bundler-cache: true
       - run: bundle exec rspec spec/eocoordination
-      - run: bundle exec rake build
-      - run: bundle exec ruby -c dist/libeocoordination.lic
 
   build:
     runs-on: ubuntu-latest
@@ -36,23 +34,14 @@ jobs:
         with:
           ruby-version: '3.4'
           bundler-cache: true
-      # Each part on its own first: a syntax error in one of them is
-      # otherwise only visible through the concatenated file, where the
-      # reported line number belongs to the build output rather than to
-      # the file a contributor edited.
+      # Each part on its own, so a syntax error names the file it is in.
       - run: ruby -c scripts/eohunter.lic
       - run: for f in scripts/eohunter/*.rb; do ruby -c "$f" > /dev/null || exit 1; done
       - run: ruby -c scripts/libeocoordination.lic
       - run: for f in scripts/eocoordination/*.rb; do ruby -c "$f" > /dev/null || exit 1; done
-      - run: bundle exec rake build
-      - run: ruby -c dist/eohunter.lic
-      - run: ruby -c dist/libeocoordination.lic
+      - run: bundle exec rake gem
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: eohunter-scripts
-          path: |
-            dist/eohunter.lic
-            dist/eohunter.lic.map
-            dist/libeocoordination.lic
-            dist/libeocoordination.lic.map
+          name: eohunter-gem
+          path: dist/eohunter-*.gem
           if-no-files-found: error

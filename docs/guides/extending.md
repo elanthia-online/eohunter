@@ -154,12 +154,12 @@ constant into a silent default; two of those hid real bugs for a while.
 ```
 bundle exec rspec                  # the suite, about a second
 bundle exec rubocop                # Layout and Lint, ASCII-only source
-bundle exec rake build             # dist/eohunter.lic and dist/libeocoordination.lic
+bundle exec rake gem               # dist/eohunter-<version>.gem
 bundle exec rake doc               # the YARD site into doc/
 ```
 
 To try a change in the game, copy `scripts/eohunter.lic` and
 `scripts/eohunter/` into a Lich that has the core dependencies, or
-build and drop the single file in (strict group movement and the hold
-adapter also load `libeocoordination.lic`). `;eohunter <profile> dry` loads
+build the gem and `eohunter install` it (strict group movement and the
+hold adapter also load `libeocoordination.lic`). `;eohunter <profile> dry` loads
 everything without sending a command.

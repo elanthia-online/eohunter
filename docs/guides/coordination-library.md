@@ -14,10 +14,8 @@ start another script, or send a game command. A consumer explicitly creates and
 owns every session, discovery adapter, and operation grant, and closes them in
 its own lifecycle cleanup.
 
-Install the built `libeocoordination.lic`, not only the source-tree loader.
-`bundle exec rake build` writes that self-contained file and its line map under
-`dist/`; flat Lich installers cannot carry the `scripts/eocoordination/`
-directory used by the development checkout.
+Install `libeocoordination.lic` together with the `scripts/eocoordination/`
+directory it loads; the eohunter gem's `eohunter install` copies both.
 
 ## Architectural boundary
 

@@ -24,8 +24,7 @@
 # A script restart loads this file into a Lich that still holds the last
 # run's EO::Engine. Drop it first, so every constant below is defined once
 # (no "already initialized constant" warnings) and nothing from a file
-# since edited survives the reload. The built single file inlines this
-# header, so it gets the same fresh start.
+# since edited survives the reload.
 ::EO.send(:remove_const, :Engine) if defined?(::EO::Engine)
 
 # Anchored to the root: Lich evaluates a script body inside Lich::Common.
