@@ -208,6 +208,16 @@ RSpec.describe EO::Engine::Cleanse::Predicates do
     expect(described_class.reason(world, policy, state)).to eq(:poison) # alone, no aid
   end
 
+  it "cures our own poison before a groupmate's, then helps them" do
+    room.players = [pc('Dicate', nil)]
+    poisoned = EO::Engine::Cleanse::Aid::Link.new(name: 'Nisugi', source: -> { { 'Dicate' => entry(ailments: [:poison]) } })
+    expect(described_class.reason(world, policy, state, aid: poisoned)).to eq(:poison)
+    me[:poisoned?] = false
+    state.aid_seen.transform_values! { |at| at - 60 } # past the grace a self-curer gets
+    expect(described_class.reason(world, policy, state, aid: poisoned)).to eq(:aid)
+    expect(state.aid_need.kind).to eq(:poison)
+  end
+
   it 'leaves the old one-cast 1040 rally to a character with group aid off' do
     spells[1040] = AidSpell.new(num: 1040, known: true, affordable: true)
     policy.troubadours_rally = true

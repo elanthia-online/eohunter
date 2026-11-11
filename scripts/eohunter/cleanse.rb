@@ -334,9 +334,9 @@ module EO::Engine
           return :rally if rally_needed?(me)
           return :rally_member if aid.nil? && member_needs_rally?(world, state)
         end
-        # A groupmate's need comes before our own poison: we can carry a
-        # poison, and a stunned friend may not live through the wait.
-        if aid && (need = Aid.pick(world, aid.roster, aid.name, state))
+        # A groupmate who cannot act comes before our own poison: we can
+        # carry a poison, and a stunned friend may not live through the wait.
+        if aid && (need = Aid.pick(world, aid.roster, aid.name, state, kinds: Aid::HELPLESS))
           state.aid_need = need
           return :aid
         end
@@ -345,6 +345,12 @@ module EO::Engine
         thorns = debuffs.any? { |k| k =~ /Wall of Thorns Poison/ }
         return :poison if policy.cleanse_poison && (me.poisoned? || thorns) && Spells.poison(world) && Casting.able?(world, policy)
         return :disease if policy.cleanse_disease && me.diseased? && Spells.disease(world) && Casting.able?(world, policy)
+        # A groupmate's poison or disease waits on our own: no one is helped
+        # by a healer who dies of the same thing.
+        if aid && (need = Aid.pick(world, aid.roster, aid.name, state))
+          state.aid_need = need
+          return :aid
+        end
         return :stun if me.stunned? && stun_means?(world, policy)
         return :web_bound if (me.webbed? || me.bound?) && web_bound_means?(world, policy)
         return :grounded if policy.cleanse_grounded && debuffs.any? { |k| k =~ /Rooted|Pressed/ } && grounded_means?(world)
@@ -516,6 +522,9 @@ module EO::Engine
       MUCKLED = /webbed|sleeping|frozen|immobilized|held in place|horrified|staggered/i
       # Needs the victim may answer itself first.
       SELF_CURABLE = %i[poison disease].freeze
+      # Needs that leave the victim unable to act, which come before our own
+      # poison or disease. Theirs come after.
+      HELPLESS = %i[stun muckled].freeze
       # The game's word that a groupmate's stun is over, on the raw line
       # (names and the pronoun are links). Lich's room status lags it by a
       # moment: on 2026-11-10 a second 108 went out 0.2s after Monstr was
@@ -622,8 +631,9 @@ module EO::Engine
       # @param name [String] this character
       # @param state [State] carries aid_seen and aid_cast_at
       # @param now [Time]
+      # @param kinds [Array<Symbol>, nil] only these needs; nil for any
       # @return [Need, nil]
-      def pick(world, roster, name, state, now = Time.now)
+      def pick(world, roster, name, state, now = Time.now, kinds: nil)
         me = world.me
         current = needs(world, roster, name)
         state.aid_seen.select! { |key, _| current.include?(key) }
@@ -640,6 +650,8 @@ module EO::Engine
         return nil if mine.empty?
 
         current.each do |victim, kind|
+          next if kinds && !kinds.include?(kind)
+
           key = [victim, kind]
           last = state.aid_cast_at[key]
           next if last && now - last < REPEAT[kind]
