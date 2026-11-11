@@ -293,5 +293,7 @@ outside the table is sent bare, as bigshot sends it.
 Solo on a Ranger profile, 2026-09-10: the routine language, hides and
 fires, coup de grace with its health and Empowered gates, Assume Aspect
 from the signs box, rests to the resting room and back, and the go2
-supervision. Bandit mode, Ranger tracking and group hunting have not had
-a live run yet.
+supervision.
+
+Group hunting, head and tail, has since been run live and works. Bandit
+mode and Ranger tracking have not had a live run yet.
