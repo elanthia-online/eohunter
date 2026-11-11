@@ -7,25 +7,25 @@ module EO
     class Schema
       # Canonical page identities and their native profile setting keys.
       PAGES = {
-        'area'         => %w[hunting_room_id hunting_boundaries rallypoint_room_ids],
-        'creatures'    => %w[targets quickhunt_targets invalid_targets always_flee_from boons_ignore boons_flee],
-        'hunting'      => %w[hunting_stance wander_stance loot_script priority delay_loot loot_stance sneaky_sneaky flee_count flee_message wander_wait
-                             flee_clouds flee_vines flee_webs flee_voids lone_targets_only final_loot ignore_disks box_in_hand],
-        'monitoring'   => %w[fried overkill lte_boost oom encumbered encumbrance_grace_seconds wounded_eval creeping_dread crushing_dread wot_poison confusion],
-        'rest'         => %w[resting_room_id return_waypoint_ids resting_commands resting_scripts after_town_rest
-                             rest_till_exp rest_till_mana rest_till_spirit rest_till_percentstamina],
-        'field'        => %w[fog_return custom_fog fog_optional fog_rift
-                             field_rest_room_id field_rest_for town_rest_required_eval field_rest_commands field_rest_scripts
-                             field_return_waypoint_ids field_rallypoint_room_ids
-                             field_hunting_prep_commands field_rest_timeout_seconds],
-        'recovery'     => %w[stand_stance pull deader dead_man_switch depart_switch weapon_reaction troubadours_rally],
-        'combat'       => %w[ambush archery_aim aim quick_commands disable_commands],
-        'unarmed'      => %w[tier3 uac_smite uac_mstrike mstrike_stamina_cooldown mstrike_stamina_quickstrike mstrike_mob mstrike_cooldown mstrike_quickstrike],
-        'equipment'    => %w[hunting_right_hand hunting_left_hand hunting_aim hunting_loadout_sets hunting_loadout_rules ammo_container ammo wand
-                             wand_if_oom fresh_wand_container dead_wand_container],
-        'buffs'        => %w[combat_buffs signs bless use_wracking wracking_spirit check_favor],
-        'preparations' => %w[preparations hunting_prep_commands hunting_scripts],
-        'team'         => %w[group_members independent_travel independent_return group_deader ma_looter never_loot random_loot quiet_followers group_fried_trigger group_strict_movement]
+        'area'      => %w[hunting_room_id hunting_boundaries rallypoint_room_ids],
+        'creatures' => %w[targets quickhunt_targets invalid_targets always_flee_from boons_ignore boons_flee],
+        'hunting'   => %w[hunting_stance wander_stance stand_stance turbo weapon_reaction loot_script priority delay_loot loot_stance sneaky_sneaky flee_count flee_message wander_wait
+                          flee_clouds flee_vines flee_webs flee_voids lone_targets_only final_loot ignore_disks box_in_hand],
+        'rest'      => %w[fried overkill lte_boost oom encumbered encumbrance_grace_seconds wounded_eval creeping_dread crushing_dread wot_poison confusion
+                          resting_room_id return_waypoint_ids resting_commands resting_scripts after_town_rest
+                          rest_till_exp rest_till_mana rest_till_spirit rest_till_percentstamina
+                          fog_return custom_fog fog_optional fog_rift
+                          field_rest_room_id field_rest_for town_rest_required_eval field_rest_commands field_rest_scripts
+                          field_return_waypoint_ids field_rallypoint_room_ids
+                          field_hunting_prep_commands field_rest_timeout_seconds],
+        'recovery'  => %w[group_aid pull deader dead_man_switch depart_switch troubadours_rally],
+        'combat'    => %w[ambush archery_aim aim quick_commands disable_commands
+                          tier3 uac_smite uac_mstrike mstrike_stamina_cooldown mstrike_stamina_quickstrike mstrike_mob mstrike_cooldown mstrike_quickstrike],
+        'equipment' => %w[hunting_right_hand hunting_left_hand hunting_aim hunting_loadout_sets hunting_loadout_rules ammo_container ammo wand
+                          wand_if_oom fresh_wand_container dead_wand_container
+                          combat_buffs signs bless use_wracking wracking_spirit check_favor
+                          preparations hunting_prep_commands hunting_scripts],
+        'team'      => %w[group_members independent_travel independent_return group_deader ma_looter final_looter never_loot random_loot quiet_followers group_fried_trigger group_strict_movement]
       }.freeze
 
       # Technical expressions and obsolete compatibility controls stay tucked
@@ -40,108 +40,138 @@ module EO
 
       # Descriptions reflect Profile and the pure Rest/Flee/Group policies. A
       # missing description deliberately exposes a raw advanced control.
+      # Worked examples for the two loadout boxes, one line each, shared by
+      # their tooltips and the example under the boxes so they agree.
+      LOADOUT_RULES_EXAMPLE = ["- target: triton protector", "  set: slasher", "- type: undead", "  set: blunt", "- target: wight", "  type: undead", "  set: blessed"].freeze
+      LOADOUT_SETS_EXAMPLE = ['slasher:', '  right: falchion', '  left: ready:shield', 'blunt:', '  right: war hammer', '  aim: head',
+                              'blessed:', '  right: blessed maul', '  left: empty'].freeze
+
+      # A non-breaking space: a tooltip may squeeze ordinary leading spaces,
+      # and YAML needs its two.
+      NBSP = [160].pack('U').freeze
+
+      # An example as tooltip text: on lines of its own, indentation kept.
+      # @param lines [Array<String>]
+      # @return [String]
+      def self.example(lines)
+        "\n\nFor example:\n" + lines.map { |line| line.sub(/\A +/) { |spaces| NBSP * spaces.size } }.join("\n")
+      end
+
       COPY = {
-        'loot_script'                 => ['Loot script', 'Script to handle loot, for example eloot. Leave blank to use Hunter\'s built-in LOOT commands.'],
-        'priority'                    => ['Prefer earlier targets', 'Allow a creature earlier in your target list to take priority over the current target. Disabled keeps the current target while it remains valid.'],
-        'delay_loot'                  => ['Loot less in combat', 'While creatures remain, space out looting attempts using the native delay. This does not mean waiting until every creature is dead.'],
-        'loot_stance'                 => ['Defensive stance to loot', 'Switch to defensive stance before looting while fightable creatures remain.'],
-        'final_loot'                  => ['Loot before leaving', 'Request a final loot pass before wandering onward. Normal room-claim and looting restrictions still apply.'],
-        'flee_clouds'                 => ['Flee clouds', 'Leave when the native room reader recognizes a cloud hazard. This does not identify every possible environmental danger.'],
-        'flee_vines'                  => ['Flee vines', 'Leave when the native room reader recognizes a vine hazard.'],
-        'flee_webs'                   => ['Flee webs', 'Leave when the native room reader recognizes a web hazard.'],
-        'flee_voids'                  => ['Flee voids', 'Leave when the native room reader recognizes a void hazard.'],
-        'ignore_disks'                => ['Ignore other disks', 'Ignore foreign disks when deciding whether to hunt in a room. Other room-claim rules still apply; this does not authorize taking another player\'s creatures.'],
-        'fog_return'                  => ['Return method', 'Choose the native return method before the walk to your rest room. Availability and fallback behavior are handled by Lich; choosing a method does not grant the ability.'],
-        'fog_optional'                => ['Teleport only if needed', 'Use the selected return method only for injury or encumbrance; otherwise walk.'],
-        'fog_rift'                    => ['Rift escape', 'Pass the Rift escape flag to Lich fog handling. Review this for your destination; this is not a general extra teleport switch.'],
-        'custom_fog'                  => ['Return commands', 'Ordered commands used by the Custom return method. These are not combat routines.'],
-        'return_waypoint_ids'         => ['Waypoints home', 'Comma-separated mapped rooms visited in order before the rest room.'],
-        'rallypoint_room_ids'         => ['Rally point', 'Comma-separated mapped rooms visited in order before the hunt starting room.'],
-        'boons_ignore'                => ['Boons to avoid', 'Native boon names to exclude from deliberate targeting. Avoiding a target does not prevent it attacking you.'],
-        'boons_flee'                  => ['Boons to flee', 'Native boon names that cause Hunter to leave the room.'],
-        'tier3'                       => ['Excellent positioning', 'Move used by automatic unarmed combat at excellent positioning. Native follow-up logic still applies.'],
-        'aim'                         => ['Unarmed aim order', 'Comma-separated body locations used by automatic unarmed combat. Leave blank for no configured aiming order.'],
-        'uac_smite'                   => ['Voln SMITE', 'Allow native unarmed handling to attempt SMITE where applicable.'],
-        'uac_mstrike'                 => ['Disable auto MSTRIKE', 'This legacy flag is inverted: Enabled suppresses automatic unarmed MSTRIKE. Disabled allows native MSTRIKE checks. Explicit mstrike commands are separate.'],
-        'mstrike_mob'                 => ['MSTRIKE at this many', 'Creature threshold for the native multi-target MSTRIKE policy.', 'creatures'],
-        'mstrike_cooldown'            => ['MSTRIKE on cooldown', 'Permit the higher-cost cooldown action when the native stamina checks pass.'],
-        'mstrike_quickstrike'         => ['QUICKSTRIKE with MSTRIKE', 'Enable the native QUICKSTRIKE option for MSTRIKE.'],
-        'mstrike_stamina_cooldown'    => ['Stamina for cooldown MSTRIKE', 'Minimum stamina for the cooldown policy. Blank retains the native maximum-stamina fallback.', 'stamina points'],
-        'mstrike_stamina_quickstrike' => ['Stamina for QUICKSTRIKE', 'Minimum stamina for the native QUICKSTRIKE policy. Blank retains its native fallback.', 'stamina points'],
-        'ammo'                        => ['Ammunition', 'Legacy ammunition noun passed to native upkeep. FIRE itself uses the game ranged system; this does not create an ammo retrieval loop.'],
-        'wand'                        => ['Wand types', 'Comma-separated wand names accepted by native wand handling.'],
-        'wand_if_oom'                 => ['Wand when out of mana', 'Allow the native wand fallback. Rest thresholds still apply; this does not override a return decision.'],
-        'fresh_wand_container'        => ['Fresh wands', 'Container where native wand handling looks for usable wands.'],
-        'dead_wand_container'         => ['Used wands', 'Container for depleted wands.'],
-        'dead_man_switch'             => ['Log out on death', 'Current Hunter behavior: send QUIT on death. This is not a low-health logout trigger. Depart, if enabled, takes precedence.'],
-        'depart_switch'               => ['DEPART on death', 'Send DEPART once on death, giving up the body and resurrection opportunity. This does not promise automatic restart.'],
-        'group_deader'                => ['Stop for a dead member', 'Enable the native group death check.'],
-        'quiet_followers'             => ['Leader services first', 'Followers defer their rest work until the leader reaches the native service barrier.'],
-        'never_loot'                  => ['Never loot', 'Comma-separated character names excluded from group looting assignments.'],
-        'field_rest_commands'         => ['Field rest commands', 'Ordered commands at the nearby rest site. Separate from town rest commands.'],
-        'field_rest_scripts'          => ['Field rest services', 'Ordered script names with arguments, without the script prefix.'],
-        'field_hunting_prep_commands' => ['Before leaving field rest', 'Ordered preparation commands before returning to the hunt from the field site.'],
-        'group_members'               => ['Required followers', 'Comma-separated character names, excluding this leader. Used by ;eohunter <profile> group. Each follower must separately enable its MA receiver and approve the leader and local profile. Saving this list does not grant control or start anyone.'],
-        'signs'                       => ['Upkeep entries', 'Comma-separated spell IDs or supported Hunter upkeep entries. The society checkboxes edit this same list. Custom entries are preserved; this is not a list of commands to send directly.'],
-        'use_wracking'                => ['Society mana recovery', 'Allow Hunter\'s existing mana-recovery policy to use Sign of Wracking, Sigil of Power or Symbol of Mana when applicable. Native knowledge, resource and cooldown checks still apply. Selecting an upkeep buff does not enable this switch.'],
-        'wracking_spirit'             => ['Spirit kept for wracking', 'Native spirit floor used by the mana-recovery policy, including pending spirit loss from dissipating signs. This is not a blanket spirit reserve for every upkeep ability.', 'spirit points'],
-        'check_favor'                 => ['Check favor', 'Use Lich\'s favor affordability reader for the symbols covered by Hunter\'s existing favor check. This is not a universal favor budget or a promise to check every symbol.'],
-        'bless'                       => ['Renew blessings', 'Enable Hunter\'s existing weapon-blessing upkeep when it detects that a blessing wore off. This does not automatically bless every item you carry.'],
-        'hunting_stance'              => ['Attack stance', 'Hunter sets this before most attack actions. Numeric spell lines, hide, wait and sleep have separate native handling; Lich spell delivery may also change stance. Explicit stance steps do not disable this policy.'],
-        'wander_stance'               => ['Waiting stance', 'Used while wandering and by native wait/pause actions. This is not a guarantee that every action immediately returns to this stance.'],
-        'stand_stance'                => ['Standing stance', 'Stance used by native survival handling when getting back to your feet.'],
-        'archery_aim'                 => ['Ranged aim order', 'Comma-separated body parts used by the Hunter fire action, for example right eye, head, chest. Native logic can skip refused or missing parts. Do not add a body part after fire in a routine.'],
-        'ambush'                      => ['Ambush aim order', 'Comma-separated body parts for ambush or dhurl without a per-action aim. Ambush uses an open ATTACK if not hidden; add the hidden condition if you require hiding.'],
-        'ammo_container'              => ['Ammunition container', 'Container used by the native ranged action to stow ammunition after a refused shot. This setting does not itself retrieve, summon, or reload ammunition.'],
-        'sneaky_sneaky'               => ['Hide while moving', 'Uses the native hidden-wandering policy. It is not a stalking or follow-target feature, and does not replace hidden conditions on combat actions.'],
-        'hunting_room_id'             => ['Start room', 'Travel to this mapped room to begin hunting. A room UID such as u1234 is resolved using the installed map.', 'room ID or UID'],
-        'hunting_boundaries'          => ['Boundary rooms', 'Rooms Hunter will not step into, which is what keeps the hunt inside the area you meant. These are excluded edge rooms, not a list of rooms to hunt.', 'room IDs or UIDs'],
-        'targets'                     => ['Creatures to hunt', 'Comma-separated creature names or anchored case-insensitive patterns. Add (b) through (j) to choose another routine. Empty means all otherwise eligible creatures.'],
-        'quickhunt_targets'           => ['Quick-hunt creatures', 'Creatures taken with the quick-hunt combat sequence instead of the usual one: comma-separated names or patterns, as for Creatures to hunt.'],
-        'invalid_targets'             => ['Creatures to ignore', 'Comma-separated creature names or nouns excluded from deliberate targeting; this does not prevent their attacks or area effects.'],
-        'always_flee_from'            => ['Creatures to flee', 'Comma-separated creature or player names or nouns that cause Hunter to leave the room.'],
-        'resting_room_id'             => ['Town rest room', 'The mapped room used for ordinary rest and town recovery. Required when using combat buffs, preparations or field rest.', 'room ID or UID'],
-        'fried'                       => ['Mind full', 'Return when mind percentage is at or above this threshold and the configured extra kills and LTE boosts are exhausted. Above 100 disables the mind trigger.', 'mind %'],
-        'overkill'                    => ['Extra kills', 'Additional kills before resting after reaching the mind threshold, also subject to the LTE boost allowance.', 'kills'],
-        'lte_boost'                   => ['LTE boosts', 'Number of LTE boosts allowed per rest cycle before the full-mind rest condition is satisfied.', 'boosts per cycle'],
-        'oom'                         => ['Low mana', 'Return when mana percentage is strictly below this threshold. A negative value disables this trigger; the default 0 does not trigger at zero mana.', 'mana %'],
-        'encumbered'                  => ['Encumbrance', 'Return when encumbrance percentage is at or above this threshold after loot settles and the grace period passes.', 'encumbrance %'],
-        'encumbrance_grace_seconds'   => ['Weight settle time', 'Seconds of sustained encumbrance before returning. This does not delay unrelated emergency responses.', 'seconds'],
-        'rest_till_exp'               => ['Rested mind', 'Mind percentage must be at or below this value before hunting resumes. Other recovery checks must also pass.', 'mind %'],
-        'rest_till_mana'              => ['Rested mana', 'Mana percentage must be at or above this value before hunting resumes.', 'mana %'],
-        'rest_till_spirit'            => ['Rested spirit', 'Actual spirit points must be at or above this value before hunting resumes.', 'spirit points'],
-        'rest_till_percentstamina'    => ['Rested stamina', 'Stamina percentage must be at or above this value before hunting resumes.', 'stamina %'],
-        'resting_commands'            => ['Rest commands', 'Ordered comma-separated game commands sent at the rest room. Supports (xN), (xx) and legacy and groups. Command replies do not prove recovery.'],
-        'resting_scripts'             => ['Rest services', 'Comma-separated script names with arguments, such as eherbs or eloot sell. Hunter waits for resting scripts before resuming; each script keeps its own settings.'],
-        'hunting_prep_commands'       => ['Before hunting', 'Ordered comma-separated game commands sent during hunting preparation. Supports (xN), (xx) and legacy and groups.'],
-        'hunting_scripts'             => ['Scripts while hunting', 'Comma-separated scripts started for the hunting phase. Their internal settings remain owned by those scripts.'],
-        'field_rest_room_id'          => ['Field rest room', 'Optional second rest site for ordinary solo hunts. Other recovery needs still use the town rest room.', 'room ID or UID'],
-        'field_rest_for'              => ['Field rest handles', 'Defaults to fried and mana. Native reason names also include wounded, creeping_dread, crushing_dread, poison and confusion. If any simultaneous need requires town, Hunter goes to town.'],
-        'field_rest_timeout_seconds'  => ['Field rest limit', 'Seconds allowed at field rest before escalating recovery to town. Zero disables the timeout.', 'seconds'],
-        'after_town_rest'             => ['After town rest', 'Use resume to continue hunting or stop to finish after town recovery.'],
-        'wounded_eval'                => ['Injury condition', 'Advanced Ruby expression evaluated by the running hunt. Validate checks that it parses; Test now shows what it says at this moment.'],
-        'town_rest_required_eval'     => ['Town instead when', 'A Ruby condition the hunt checks when it needs a rest. True sends it to town for this rest rather than the field rest room; blank never does. Test now shows what it says at this moment.'],
-        'hunting_commands'            => ['Combat sequence', 'Ordered comma-separated routine a commands. Supports Hunter routine conditions, (xN), (xx) and legacy and groups. Custom commands are preserved.'],
-        'disable_commands'            => ['After mind is full', 'Optional alternative combat commands used by a full learner in a coordinated group while other members continue.'],
-        'quick_commands'              => ['Quick-hunt sequence', 'Ordered commands for quick-hunt targets, with the native routine language preserved.'],
-        'hunting_right_hand'          => ['Right hand', 'Use keep to leave the hand unmanaged, empty to clear it, ready:weapon or another supported ready slot, or an item name.'],
-        'hunting_left_hand'           => ['Left hand', 'Use keep to leave the hand unmanaged, empty to clear it, a supported ready slot, or an item name.'],
-        'hunting_aim'                 => ['Aimed body part', 'Optional default body location for the hunting loadout. Empty leaves the aim unchanged.'],
-        'hunting_loadout_sets'        => ['Equipment sets', 'Advanced named right/left hand and aim settings validated by the installed loadout policy.'],
-        'hunting_loadout_rules'       => ['Equipment rules', 'Ordered native rules selecting an equipment set for a target. The first matching rule selects the set.'],
-        'combat_buffs'                => ['Required buffs', 'Native required-buff and recovery settings, validated by the installed buff policy. Currently supported only for ordinary solo hunts.'],
-        'preparations'                => ['Item preparations', 'Named, event-confirmed preparation commands referenced by prepare NAME. Currently supported only for ordinary solo hunts.'],
-        'flee_count'                  => ['Too many targets', 'Leave when the number of fightable targets is strictly greater than this value.', 'creatures'],
-        'lone_targets_only'           => ['One target to start', 'On entering a room, use a crowd limit of one until a fight has begun.'],
-        'flee_message'                => ['Flee on message', 'Case-insensitive regular expression matched against game lines. The engine ignores an invalid expression.'],
-        'wander_wait'                 => ['Wait for a creature', 'Seconds to stay in an unclaimed room before moving on. Hunter can engage as soon as a creature appears; a claimed room is left immediately.', 'seconds'],
-        'group_fried_trigger'         => ['Whose full mind returns', 'Use any, all, or comma-separated member names. Names mean any listed member; all considers active reporting members plus the leader.'],
-        'group_strict_movement'       => ['Wait for members', 'Enable the installed strict group movement coordination. This does not authorize control of independent party members.'],
-        'independent_travel'          => ['Followers travel alone', 'Coordinated followers travel to the hunting room independently instead of relying on group travel.'],
-        'independent_return'          => ['Followers return alone', 'Coordinated followers travel back to rest independently.'],
-        'ma_looter'                   => ['Team looter', 'Name of the coordinated looter, matched case-insensitively.'],
-        'random_loot'                 => ['Least encumbered loots', 'Assign group looting to the least encumbered member. Despite its legacy name, this is not a random choice.'],
-        'box_in_hand'                 => ['Box in hand', 'Preserved legacy setting. Hunter always watches loot completion, so this setting does not change its behavior.']
+        'loot_script'                 => ['Loot script', 'The script that loots for you, such as eloot. Leave blank to use plain LOOT.'],
+        'priority'                    => ['Priority targets', 'Switch to a creature that is earlier in your target list when one shows up. Off: finish the current target first.'],
+        'delay_loot'                  => ['Delay looting', 'While creatures are still up, wait a moment between loot attempts instead of looting every kill at once.'],
+        'loot_stance'                 => ['Loot in defensive', 'Go to defensive before looting while creatures are still up.'],
+        'final_loot'                  => ['Final loot', 'Loot one last time before leaving a room or heading back to rest.'],
+        'flee_clouds'                 => ['Flee clouds', 'Leave the room when a cloud is in it.'],
+        'flee_vines'                  => ['Flee vines', 'Leave the room when vines are in it.'],
+        'flee_webs'                   => ['Flee webs', 'Leave the room when webs are in it.'],
+        'flee_voids'                  => ['Flee voids', 'Leave the room when a void is in it.'],
+        'ignore_disks'                => ['Ignore other disks', 'Hunt a room even when someone else\'s disk is in it. Rooms with other players are still skipped.'],
+        'fog_return'                  => ['Return method', 'How to get back to the rest room: walk, or a teleport you know.'],
+        'fog_optional'                => ['Teleport only if needed', 'Only teleport home when hurt or encumbered. Otherwise walk.'],
+        'fog_rift'                    => ['Rift escape', 'Use the Rift escape option when teleporting home.'],
+        'custom_fog'                  => ['Return commands', 'Commands to send, in order, when the return method is Custom.'],
+        'return_waypoint_ids'         => ['Waypoints home', 'Rooms to walk through, in order, on the way to the rest room. Comma separated.'],
+        'field_return_waypoint_ids'   => ['Waypoints to field rest', 'Rooms to walk through, in order, on the way to the field rest room. Comma separated.'],
+        'field_rallypoint_room_ids'   => ['Rally after field rest', 'Rooms to walk through, in order, on the way back to the hunt from field rest. Comma separated.'],
+        'rallypoint_room_ids'         => ['Rally point', 'Rooms to walk through, in order, on the way to the start room. Comma separated.'],
+        'boons_ignore'                => ['Boons to avoid', 'Don\'t attack a creature with any of these boons. It can still attack you.'],
+        'boons_flee'                  => ['Boons to flee', 'Leave the room when a creature has any of these boons.'],
+        'tier3'                       => ['Excellent positioning', 'The attack to use when unarmed combat reaches excellent positioning.'],
+        'aim'                         => ['Unarmed aim order', 'Body parts to aim unarmed attacks at, in order. Comma separated.'],
+        'uac_smite'                   => ['Voln SMITE', 'Use Voln SMITE in unarmed combat when it applies.'],
+        'uac_mstrike'                 => ['Disable auto MSTRIKE', 'Ticked: unarmed combat never MSTRIKEs on its own. MSTRIKE in a routine still works.'],
+        'mstrike_mob'                 => ['MSTRIKE at this many', 'MSTRIKE when at least this many creatures are in the room.', 'creatures'],
+        'mstrike_cooldown'            => ['MSTRIKE on cooldown', 'Allow MSTRIKE while it is on cooldown, which costs extra stamina.'],
+        'mstrike_quickstrike'         => ['QUICKSTRIKE with MSTRIKE', 'Add QUICKSTRIKE to MSTRIKE.'],
+        'mstrike_stamina_cooldown'    => ['Stamina for cooldown MSTRIKE', 'Only MSTRIKE on cooldown with at least this much stamina. Blank: your maximum.', 'stamina'],
+        'mstrike_stamina_quickstrike' => ['Stamina for QUICKSTRIKE', 'Only QUICKSTRIKE with at least this much stamina.', 'stamina'],
+        'ammo'                        => ['Ammunition', 'What you fire. The hunt does not gather spent ammunition.'],
+        'wand'                        => ['Wand types', 'Wands to use, by name. Comma separated.'],
+        'wand_if_oom'                 => ['Wand when out of mana', 'Use a wand when you are out of mana. Low mana still sends you to rest.'],
+        'fresh_wand_container'        => ['Fresh wands', 'The container your charged wands are in.'],
+        'dead_wand_container'         => ['Used wands', 'The container to put empty wands in.'],
+        'dead_man_switch'             => ['Log out on death', 'QUIT when you die. DEPART on death wins if both are ticked.'],
+        'depart_switch'               => ['DEPART on death', 'DEPART when you die, giving up your body and any chance to be raised.'],
+        'pull'                        => ['Pull players', 'Pull any player who is down while a creature is attacking. Group members are always pulled.'],
+        'deader'                      => ['Stop for the dead', 'Stop hunting when any dead player is in the room.'],
+        'weapon_reaction'             => ['Weapon reactions', 'Use the weapon reaction the game offers before the next attack.'],
+        'troubadours_rally'           => ['Rally the group (1040)', 'Troubadour\'s Rally when you are webbed, asleep, stunned or frozen, or a group member has an ailment.'],
+        'group_aid'                   => ['Group aid', 'Help a group member who has an ailment you can cure. One who is stunned, webbed or asleep comes before your own poison; their poison or disease comes after yours.'],
+        'group_deader'                => ['Stop for a dead member', 'Stop hunting when a group member dies.'],
+        'quiet_followers'             => ['Leader services first', 'Followers wait for the leader before starting their own rest.'],
+        'never_loot'                  => ['Never loot', 'Characters who are never sent to loot. Comma separated.'],
+        'field_rest_commands'         => ['Field rest commands', 'Commands to send, in order, at the field rest room.'],
+        'field_rest_scripts'          => ['Field rest scripts', 'Scripts to run, in order, at the field rest room, such as eherbs.'],
+        'field_hunting_prep_commands' => ['Before leaving field rest', 'Commands to send, in order, before going back to the hunt from field rest.'],
+        'group_members'               => ['Required followers', 'Characters who must be with you for ;eohunter <hunt> group. Each one has to agree to follow you.'],
+        'signs'                       => ['Upkeep', 'Spells and signs to keep up, by number. Comma separated.'],
+        'use_wracking'                => ['Society mana recovery', 'Use Sign of Wracking, Sigil of Power or Symbol of Mana when you are low on mana.'],
+        'wracking_spirit'             => ['Spirit kept for wracking', 'Don\'t use Sign of Wracking below this much spirit.', 'spirit'],
+        'check_favor'                 => ['Check favor', 'Only use a Voln symbol when you have the favor for it.'],
+        'bless'                       => ['Renew blessings', 'Re-bless your weapon when its blessing wears off.'],
+        'hunting_stance'              => ['Attack stance', 'The stance to attack in.'],
+        'wander_stance'               => ['Wander stance', 'The stance to walk and wait in.'],
+        'stand_stance'                => ['Stand-up stance', 'The stance to take after standing up.'],
+        'turbo'                       => ['Turbo (test)', 'Test option. Send the next commands without waiting for each reply. Stance: stance and attack together. All: target, stance and attack together. Can type ahead of the game.'],
+        'archery_aim'                 => ['Ranged aim order', 'Body parts to aim FIRE at, in order, such as right eye, head, chest. Comma separated.'],
+        'ambush'                      => ['Ambush aim order', 'Body parts to aim AMBUSH at, in order. Comma separated.'],
+        'ammo_container'              => ['Ammunition container', 'Where to put ammunition back when a shot is refused.'],
+        'sneaky_sneaky'               => ['Hide while moving', 'Hide before moving to the next room.'],
+        'hunting_room_id'             => ['Start room', 'The room the hunt starts in. A room number, or a UID such as u1234.', 'room'],
+        'hunting_boundaries'          => ['Boundary rooms', 'Rooms the hunt never walks into. They keep you inside the area. Comma separated.', 'rooms'],
+        'targets'                     => ['Creatures to hunt', 'Creatures to attack. Add (b) to (j) after a name to use that routine. Blank: anything you can fight.'],
+        'quickhunt_targets'           => ['Quick-hunt creatures', 'Creatures to fight with the Quick routine instead of the usual one.'],
+        'invalid_targets'             => ['Creatures to ignore', 'Creatures never to attack. They can still attack you.'],
+        'always_flee_from'            => ['Creatures to flee', 'Leave the room when any of these creatures or players is in it.'],
+        'resting_room_id'             => ['Town rest room', 'The room to rest in. Needed for buffs, preparations and field rest.', 'room'],
+        'fried'                       => ['Mind full', 'Go rest when your mind is at least this full. Above 100: never.', 'mind %'],
+        'overkill'                    => ['Extra kills', 'Kills to make after your mind is full before going to rest.', 'kills'],
+        'lte_boost'                   => ['LTE boosts', 'Long-term experience boosts to use before going to rest.', 'boosts'],
+        'oom'                         => ['Low mana', 'Go rest when your mana falls below this. Below 0: never.', 'mana %'],
+        'encumbered'                  => ['Encumbrance', 'Go rest when you are at least this encumbered.', 'percent'],
+        'encumbrance_grace_seconds'   => ['Weight settle time', 'How long to stay that encumbered before going to rest, so looting can settle.', 'seconds'],
+        'creeping_dread'              => ['Creeping Dread', 'Go rest at this many stacks of Creeping Dread. 0: never.', 'stacks'],
+        'crushing_dread'              => ['Crushing Dread', 'Go rest at this many stacks of Crushing Dread. 0: never.', 'stacks'],
+        'wot_poison'                  => ['Wall of Thorns poison', 'Go rest when poisoned by a Wall of Thorns.'],
+        'confusion'                   => ['Confusion', 'Go rest when confused.'],
+        'rest_till_exp'               => ['Rested mind', 'Rest until your mind is down to this.', 'mind %'],
+        'rest_till_mana'              => ['Rested mana', 'Rest until your mana is back to this.', 'mana %'],
+        'rest_till_spirit'            => ['Rested spirit', 'Rest until your spirit is back to this.', 'spirit'],
+        'rest_till_percentstamina'    => ['Rested stamina', 'Rest until your stamina is back to this.', 'stamina %'],
+        'resting_commands'            => ['Rest commands', 'Commands to send, in order, at the rest room. Comma separated.'],
+        'resting_scripts'             => ['Rest scripts', 'Scripts to run, in order, at the rest room, such as eherbs or eloot sell. The hunt waits for each.'],
+        'hunting_prep_commands'       => ['Before hunting', 'Commands to send, in order, before heading out to hunt. Comma separated.'],
+        'hunting_scripts'             => ['Scripts while hunting', 'Scripts to start when the hunt begins.'],
+        'field_rest_room_id'          => ['Field rest room', 'A rest room near the hunt, for solo hunts. Anything it can\'t fix still goes to town.', 'room'],
+        'field_rest_for'              => ['Field rest handles', 'What to rest for at the field rest room, such as fried and mana. Anything else goes to town.'],
+        'field_rest_timeout_seconds'  => ['Field rest limit', 'Go to town if field rest takes longer than this. 0: no limit.', 'seconds'],
+        'after_town_rest'             => ['After town rest', 'Go back to hunting, or stop.'],
+        'wounded_eval'                => ['Injury condition', 'A Ruby condition. When it is true, go rest. Test now shows what it says right now.'],
+        'town_rest_required_eval'     => ['Town instead when', 'A Ruby condition. When it is true, rest in town instead of the field rest room.'],
+        'hunting_commands'            => ['Combat routine', 'The usual routine: commands to attack with, in order. A creature marked (b) in Creatures to hunt uses routine b instead, and so on.'],
+        'disable_commands'            => ['Fried routine', 'Commands to use once your mind is full while the group keeps hunting.'],
+        'quick_commands'              => ['Quick routine', 'Commands for quick-hunt creatures.'],
+        'hunting_right_hand'          => ['Right hand', 'What to hold in your right hand while hunting.'],
+        'hunting_left_hand'           => ['Left hand', 'What to hold in your left hand while hunting.'],
+        'hunting_aim'                 => ['Aimed body part', 'The body part to aim at while hunting. Blank: leave it as it is.'],
+        'hunting_loadout_sets'        => ['Equipment sets', 'Named sets of what to hold. Each set is a name at the left edge, then any of right:, left: and aim: on lines indented exactly two spaces under it. Right and left take the same values as the Right and Left hands; aim takes a body part. Anything a set leaves out comes from Hands. A set is only used when a rule names it.' + example(LOADOUT_SETS_EXAMPLE)],
+        'hunting_loadout_rules'       => ['Equipment rules', 'Which set to use for which creature. Each rule starts with a dash and needs set: (a name from Sets) plus target:, type: or both, each on its own line indented exactly two spaces to line up after the dash. target: is a creature name, matched as in Creatures to hunt. type: is living, undead or noncorporeal. With both, the creature must match both. Rules are checked top to bottom and the first match wins, so put specific rules above general ones. A creature no rule matches uses the Right and Left hands.' + example(LOADOUT_RULES_EXAMPLE)],
+        'combat_buffs'                => ['Required buffs', 'Buffs you must have to hunt, and what to do when one drops. Solo hunts only.'],
+        'preparations'                => ['Item preparations', 'Named commands a routine runs with prepare NAME. Solo hunts only.'],
+        'flee_count'                  => ['Too many targets', 'Leave the room when there are more creatures than this.', 'creatures'],
+        'lone_targets_only'           => ['Lone targets', 'Only go into a fight in a room with a single creature.'],
+        'flee_message'                => ['Flee on message', 'Leave the room when the game says something matching this. A regular expression.'],
+        'wander_wait'                 => ['Wait for a creature', 'How long to wait in an empty room before moving on.', 'seconds'],
+        'group_fried_trigger'         => ['Whose full mind returns', 'Whose full mind sends the group to rest: any, all, or names.'],
+        'group_strict_movement'       => ['Wait for members', 'Wait for every member before moving to the next room.'],
+        'independent_travel'          => ['Followers travel alone', 'Followers walk to the hunt on their own instead of following the leader.'],
+        'independent_return'          => ['Followers return alone', 'Followers walk back to rest on their own.'],
+        'final_looter'                => ['Final looter', 'Who does the group\'s final loot before it leaves a room. Blank: the team looter.'],
+        'ma_looter'                   => ['Team looter', 'Who loots the group\'s kills.'],
+        'random_loot'                 => ['Least encumbered loots', 'Whoever is carrying least does the looting.'],
+        'box_in_hand'                 => ['Box in hand', 'Not used.']
       }.freeze
 
       # Presentation choices for existing native values, not new execution policy.
@@ -152,8 +182,17 @@ module EO
           [5, 'Familiar Gate (930)'], [6, 'Custom return commands']
         ],
         'tier3'           => %w[jab punch grapple kick].map { |word| [word, word.capitalize] },
-        'after_town_rest' => [['resume', 'Resume hunting'], ['stop', 'Finish after town recovery']]
+        'after_town_rest' => [['resume', 'Resume hunting'], ['stop', 'Finish after town recovery']],
+        'turbo'           => [['off', 'Off'], ['stance', 'Stance'], ['all', 'All']],
+        # Lich's CreatureInstance::BODY_PARTS, spaced as AIM takes them, without
+        # nerves, which is a wound and not somewhere to aim.
+        'hunting_aim'     => %w[head neck chest abdomen back left\ eye right\ eye left\ arm right\ arm left\ hand right\ hand
+                                left\ leg right\ leg left\ foot right\ foot].map { |part| [part, part.capitalize] }
       }.freeze
+
+      # Saved values a choice shows as one of its options: Bigshot wrote
+      # turbo as true or false.
+      ALIASES = { 'turbo' => { 'true' => 'all', 'false' => 'off' } }.freeze
 
       # Value types for native cleaners; other cleaners hold text.
       TYPES = { bool: 'boolean', to_i: 'integer', to_f: 'number', seconds: 'number', structured: 'structured' }.freeze
@@ -184,7 +223,7 @@ module EO
             'key' => key, 'type' => TYPES.fetch(cleaner, 'string'), 'cleaner' => cleaner.to_s,
             'options' => field_options(key, cleaner),
             'default' => copy_value(default), 'label' => copy ? copy[0] : key.split('_').map(&:capitalize).join(' '),
-            'help' => copy ? copy[1] : "Advanced native #{key} setting. Edit its raw value; the installed profile parser applies #{cleaner} normalization.",
+            'help' => copy ? copy[1] : routine_help(key),
             'page' => page || 'hunting', 'aliases' => aliases, 'editor' => copy && cleaner != :structured ? 'guided' : 'raw',
             'advanced' => ADVANCED_FIELDS.include?(key) || copy.nil? || cleaner == :structured,
             'units' => copy && copy[2], 'scope' => 'hunt or inherited character default'
@@ -198,7 +237,7 @@ module EO
       def search(query)
         terms = query.to_s.downcase.split
         fields.select do |field|
-          text = [field['key'], field['label'], field['help'], *field['aliases']].join(' ').downcase
+          text = [field['key'], field['label'], field['help'], field['units'], *field['aliases']].join(' ').downcase
           terms.all? { |term| text.include?(term) }
         end
       end
@@ -374,12 +413,69 @@ module EO
         OPTIONS[key]&.map { |value, label| { 'value' => value.to_s, 'label' => label } }
       end
 
+      # The hunt's Cleanse preferences as the Recovery page draws them, in
+      # ecleanse's own words. troubadours_rally has its own field.
+      RECOVERY_CONTROLS = [
+        ['Afflictions', [
+          ['cleanse_magical', 'Cleanse magical', 'Confusion, vertigo, sounds or Thought Lash, with 417, 119 or 1218 if known.'],
+          ['cleanse_grounded', 'Cleanse grounded', 'Clear rooted or pressed.'],
+          ['cleanse_poison', 'Cure poison', 'Unpoison (114).'],
+          ['cleanse_disease', 'Cure disease', 'Undisease (113).'],
+          ['determination', 'Sigil of Determination', nil],
+          ['itchy_curse', 'Manage itchy curse', 'Run to the safe room below with the itchy curse.'],
+          :safe_room
+        ]],
+        ['Hazards', [
+          ['dispel_magic', 'Dispel magic', nil],
+          ['avoid_webs', 'Dispel webs', nil],
+          ['use_berserk_webbed', 'Berserk when webbed', nil],
+          ['hive_traps_apparatus', 'Disarm hive apparatus', nil],
+          ['hive_traps_ground', 'Disarm hive ground', nil],
+          ['break_runestone', 'Break runestone', 'Attacks pale hovering runestones (Onslaught).']
+        ]],
+        # The spells here are not for a stun: they quiet the room before the
+        # weapon is searched for, then cover the search (cleanse.rb
+        # CleanseSettleRoom, cast_213_1011).
+        ['Disarmed', [
+          ['recover_disarmed', 'Recover disarmed weapons', 'Uses 218 if active.'],
+          'Calm the room first, the first that works',
+          ['use_140', 'Wall of Force (140)', nil],
+          ['use_619', 'Mass Calm (619)', nil],
+          ['use_709', 'Grasp of the Grave (709)', 'Not against appendages.'],
+          ['use_919', "Wizard's Shield (919)", nil],
+          ['use_9811', 'Symbol of Sleep (9811)', nil],
+          'While searching',
+          ['use_213', 'Minor Sanctuary (213)', nil],
+          ['use_1011', 'Song of Peace (1011)', nil]
+        ]],
+        ['When stunned', [
+          ['use_stunned_barkskin', 'Barkskin (605)', nil],
+          ['use_berserk_stunned', 'Berserk', nil],
+          ['use_stunned1040', 'Shout 1040', "Troubadour's Rally, to break your own stun."],
+          ['use_1635', 'Divine Intervention (1635)', nil],
+          'Stunman, one of',
+          ['use_stance1', 'Stance 1', 'Only one stunman choice can be on.'],
+          ['use_stance2', 'Stance 2', 'Only one stunman choice can be on.'],
+          ['use_flee', 'Flee', 'Only one stunman choice can be on.'],
+          ['use_hide', 'Hide', 'Only one stunman choice can be on.']
+        ]]
+      ].freeze
+
+      # ecleanse's window allows one of these at a time.
+      RECOVERY_EXCLUSIVE = %w[use_stance1 use_stance2 use_flee use_hide].freeze
+
+      # What a lettered routine is for, or '' for any other setting.
+      def routine_help(key)
+        letter = key[/\Ahunting_commands_([b-j])\z/, 1]
+        letter ? "Commands for creatures marked (#{letter}) in Creatures to hunt." : ''
+      end
+
       def recovery_field
         {
           'key' => 'recovery', 'type' => 'structured', 'cleaner' => 'structured', 'default' => {},
           'label' => 'Integrated recovery preferences', 'page' => 'recovery', 'editor' => 'raw', 'units' => nil,
-          'scope' => 'hunt or inherited character default', 'aliases' => %w[recovery ecleanse cleanse dispel poison disease disarm],
-          'help' => 'What Cleanse does on this hunt, with ecleanse\'s own names: a preference left out is off. ecleanse.yaml is not read or changed.',
+          'scope' => 'hunt or inherited character default', 'aliases' => %w[recovery ecleanse cleanse dispel poison disease disarm stun stunman webs hive runestone curse],
+          'help' => 'What Cleanse does on this hunt. Anything not ticked is off. Standalone ecleanse and its file are not read or changed, except by Import from ecleanse.',
           'keys' => @cleanse_policy_class ? @cleanse_policy_class.members.map(&:to_s) : []
         }
       end
@@ -388,7 +484,7 @@ module EO
         return unless raw.key?('recovery')
         recovery = raw['recovery']
         unless recovery.is_a?(Hash)
-          result['errors'] << issue('recovery', 'Recovery overrides must be a mapping; remove an override to inherit.')
+          result['errors'] << issue('recovery', 'Recovery preferences must be a mapping.')
           return
         end
         unless @cleanse_policy_class

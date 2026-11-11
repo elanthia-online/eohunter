@@ -99,6 +99,7 @@ module EO
       # @param value [Object] the setting's current value
       # @return [Array<Array(String, String)>] value and label pairs
       def choices(field, value = nil)
+        value = Schema::ALIASES.dig(field['key'], value.to_s) || value
         options = Array(field['options']).map do |option|
           option.is_a?(Hash) ? [option['value'].to_s, (option['label'] || option['value']).to_s] : [option.to_s, option.to_s]
         end
@@ -141,9 +142,27 @@ module EO
       # @param editor [Editor] the editing session
       # @param field [Hash] a schema field descriptor
       # @return [String]
-      def tooltip(editor, field)
-        measured = units(field).empty? ? '' : "In #{units(field)}."
-        [field['help'].to_s.strip, measured, provenance(editor, field), field['key'].to_s].reject(&:empty?).join("\n\n")
+      def tooltip(_editor, field)
+        help = field['help'].to_s.strip
+        default = default_text(field)
+        [help, default].reject(&:empty?).join(' ')
+      end
+
+      # The engine's default as a short sentence, or '' when it says nothing
+      # worth reading: off, blank or empty.
+      # @param field [Hash] a schema field descriptor
+      # @return [String]
+      def default_text(field)
+        value = field['default']
+        return '' if value.nil? || value == false || value == '' || value == [] || value == {}
+        return 'On by default.' if value == true
+
+        option = Array(field['options']).find { |entry| entry.is_a?(Hash) && entry['value'].to_s == value.to_s }
+        shown = if option then option['label']
+                elsif value.is_a?(Array) then value.join(', ')
+                else text(value)
+                end
+        "Default: #{shown}."
       end
 
       # @param editor [Editor] the editing session

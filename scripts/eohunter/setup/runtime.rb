@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'yaml'
+
 module EO
   module HunterSetup
     # Native script adapter: loads policy definitions, snapshots read-only game
@@ -7,7 +9,7 @@ module EO
     module Runtime
       # Setup's own modules, in dependency order; shared readers load first.
       SETUP_PARTS = %w[
-        store composition schema society_abilities area_catalog_data
+        store composition schema society_abilities recovery_abilities area_catalog_data
         area_catalog area_zones creatures places geography hazards app equipment editor form routine_check page session launch
       ].freeze
 
@@ -61,6 +63,8 @@ module EO
       # @param data_dir [String] Lich data directory
       # @param game [String] active game instance
       # @param character [String] active character name
+      # @param char_settings [Hash] where ecleanse keeps its toggles when it
+      #   has no file, for the one-time import
       # @param templates [Enumerable] native creature records
       # @param rooms [Enumerable] native map records
       # @param uid_resolver [#call] native UID lookup, without travel
@@ -71,7 +75,7 @@ module EO
       #   opening range
       # @param scripts [Array<String>, nil] installed script names, for the
       #   routine check; nil skips it
-      def app(data_dir:, game:, character:, templates:, rooms:, uid_resolver:, level: 0,
+      def app(data_dir:, game:, character:, char_settings:, templates:, rooms:, uid_resolver:, level: 0,
               ready_list: {}, inventory: [], armaments: {}, scripts: nil)
         root = File.join(data_dir, game, character)
         store = Store.new(root: File.join(root, 'eohunter'), legacy_root: File.join(root, 'bigshot_profiles'))
@@ -81,10 +85,26 @@ module EO
         geography = Geography.new(templates: templates, rooms: room_list, uid_resolver: uid_resolver)
         App.new(store: store, schema: schema, geography: geography,
                 context: { character: character, game: game, level: level },
+                ecleanse: -> { ecleanse_settings(File.join(root, 'ecleanse.yaml'), char_settings: char_settings) },
                 uid_ids: uid_resolver, room_lookup: ->(id) { room_index[id.to_i] },
                 hazards: Hazards.new(profile_class: EO::Engine::Profile),
                 society_abilities: SocietyAbilities.capture,
+                recovery_unusable: RecoveryAbilities.capture,
                 ready_list: ready_list, inventory: inventory, armaments: armaments, scripts: scripts)
+      end
+
+      # What standalone ecleanse has set, for Import from ecleanse. Read only
+      # when asked: no hunt depends on it, and the file is never written.
+      #
+      # @param path [String] the character's ecleanse.yaml
+      # @param char_settings [Hash] ecleanse's fallbacks when there is no file
+      # @return [Hash{String => Object}] the preferences that are on, without
+      #   troubadours_rally and stand_stance, which are the hunt's own settings
+      def ecleanse_settings(path, char_settings: {})
+        raw = File.exist?(path) ? (YAML.safe_load_file(path, permitted_classes: [Symbol]) || {}) : char_settings
+        raw.to_h.to_h { |key, value| [key.to_s, value] }
+           .slice(*(EO::Engine::Cleanse::KEYS - %i[troubadours_rally stand_stance]).map(&:to_s))
+           .select { |_key, value| value == true || (value.is_a?(String) && !value.strip.empty?) }
       end
     end
   end

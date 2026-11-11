@@ -15,12 +15,13 @@ module EO
       # what the page binds is handled, and a handler the page expects and
       # this does not supply fails at the first click, as ArgumentError.
       HANDLERS = %i[
-        rename load open_named set_default copy_legacy import_row new validate save revert select_page
+        rename load set_default copy_legacy new validate save revert select_page
         search change list_set_all test_condition
-        set_active request_delete confirm_delete cancel_delete
-        toggle_map sheet find_room go_to_room assign_role map_room map_click map_wheel map_zoom map_reset_zoom room_geometry
-        toggle_creatures hunt_creature hunt_all toggle_boons toggle_boon
-        toggle_aiming hunt_filter toggle_creature_search find_creature
+        set_active request_delete
+        toggle_map sheet find_room go_to_room assign_role map_click map_wheel map_zoom map_reset_zoom room_geometry
+        show_page hunt_creature hunt_all toggle_boons toggle_boon
+        hunt_filter toggle_creature_search find_creature creature_sort
+        recovery_set import_ecleanse toggle_fold
       ].freeze
 
       # What Test now said about each condition, by setting key.
@@ -33,11 +34,22 @@ module EO
       # @param confirm [#call] called with what is about to happen and a
       #   block; calls the block with true once the viewer agrees to lose
       #   unsaved edits, or with false when they keep editing
-      def initialize(editor:, evaluate: nil, refresh: nil, confirm: nil)
+      # @param details [#call] shows a creature's details, given its title
+      #   and lines
+      # @param ask [#call] asks a yes-or-no question in a dialog, given the
+      #   title, the question and the yes button's label, and calls the
+      #   block with the answer
+      # @param set_view [#call] sets a viewer-scoped property of a rendered
+      #   component for the viewer being answered, given its ID, the
+      #   property and the value
+      def initialize(editor:, evaluate: nil, refresh: nil, confirm: nil, details: nil, ask: nil, set_view: nil)
         @editor = editor
         @evaluate = evaluate
         @refresh = refresh || proc {}
         @confirm = confirm || proc { |_what, &change| change.call(true) }
+        @details = details || proc { |_found| nil }
+        @ask = ask || proc { |**_question, &answer| answer.call(true) }
+        @set_view = set_view || proc { |_cid, _property, _value| nil }
         @test_results = {}
       end
 
@@ -56,10 +68,8 @@ module EO
         case name
         when :rename then apply(editor.on_rename(value))
         when :load then open_hunt(value)
-        when :open_named then open_hunt(args[0])
         when :set_default then apply(editor.on_set_active(value == true ? args[0] : nil))
         when :copy_legacy then import(value)
-        when :import_row then import(Page.row_name('b', payload[:row], editor.legacy_profiles))
         when :new then guarded('Start a new hunt') { editor.on_new }
         when :validate then apply(editor.on_validate)
         when :save then apply(editor.on_save)
@@ -70,12 +80,12 @@ module EO
         when :list_set_all then apply(editor.on_list_set_all(args[0], value.to_s.split(/[,\n]/).map(&:strip)))
         when :test_condition then test(args[0])
         when :set_active then apply(editor.on_set_active(blank(value)))
-        when :request_delete then apply(editor.on_request_delete(args[0]))
-        when :confirm_delete then apply(editor.on_confirm_delete)
-        when :cancel_delete then apply(editor.on_cancel_delete)
+        when :request_delete then delete(args[0])
         when :toggle_map then apply(editor.on_toggle_map)
-        when :toggle_creatures then apply(editor.on_toggle_creatures)
-        when :toggle_aiming then apply(editor.on_toggle_aiming)
+        when :show_page then show_page(args[0])
+        when :toggle_fold then apply(editor.on_toggle_fold(args[0]))
+        when :recovery_set then apply(editor.on_recovery_set(args[0], value))
+        when :import_ecleanse then apply(editor.on_import_ecleanse)
         when :hunt_creature then apply(editor.on_hunt_creature(args[0], value == true))
         when :hunt_all then apply(editor.on_hunt_all(args[0]))
         when :toggle_boons then apply(editor.on_toggle_boons(args[0]))
@@ -87,7 +97,6 @@ module EO
         # A left-click on a room arrives as the region's own event. A
         # right-click arrives through the surface, with the region named
         # when one was under the pointer and the coordinates otherwise.
-        when :map_room then apply(editor.on_map_click(payload[:region], 'primary'))
         when :map_click
           apply(editor.on_map_click(payload[:region], payload[:button], { x: payload[:x], y: payload[:y] }))
         when :map_wheel then apply(editor.on_map_zoom(payload[:direction]))
@@ -96,9 +105,16 @@ module EO
         when :room_geometry then apply(editor.on_room_geometry(args[0], args[1]))
         when :hunt_filter then apply(editor.on_hunt_filter(args[0], hunt_value(args[0], value)))
         when :toggle_creature_search then apply(editor.on_toggle_creature_search)
+        when :creature_sort then apply(editor.on_creature_sort(value))
         when :find_creature
           names = editor.creature_matches.map { |creature| creature[:name].to_s }
-          apply(editor.on_find_creature(Page.row_name('m', payload[:row], names)))
+          picked = Page.row_name('m', payload[:row], names)
+          # The Details cell opens the popup; any other cell fences the
+          # creature and goes to the map.
+          return apply(editor.on_find_creature(picked)) unless payload[:column].to_s == 'details'
+
+          found = editor.creature_details(picked)
+          found ? @details.call(found) : apply(true)
         else raise ArgumentError, "the setup page has no handler named #{name}"
         end
       end
@@ -114,6 +130,25 @@ module EO
       # Run a change that would discard edits, once the viewer agrees. A
       # refusal still redraws, so a picker that was moved snaps back to what
       # is actually open rather than naming a hunt that was never loaded.
+      # Ask in a dialog before deleting a hunt, naming what else uses it.
+      def delete(name)
+        return apply(true) unless editor.on_request_delete(name) && editor.pending_delete
+
+        dependents = Array(editor.pending_delete[:dependents] || editor.pending_delete['dependents'])
+        question = "Delete #{name}? A backup is kept." + (dependents.empty? ? '' : " Also named by: #{dependents.join(', ')}.")
+        @ask.call(title: 'Delete hunt', body: question, yes: 'Delete') do |agreed|
+          apply(agreed ? editor.on_confirm_delete : editor.on_cancel_delete)
+        end
+      end
+
+      # Move the viewer to another page. The selected tab is the viewer's
+      # own, so it is set for them as well as in the draft.
+      def show_page(id)
+        moved = editor.on_show_page(id)
+        @set_view.call(editor.tabs_cid, :selected, editor.page_index) if moved && editor.tabs_cid
+        apply(moved)
+      end
+
       def guarded(what, &change)
         return apply(change.call) unless editor.dirty?
 

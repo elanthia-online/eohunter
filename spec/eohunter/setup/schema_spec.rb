@@ -18,7 +18,7 @@ RSpec.describe EO::HunterSetup::Schema do
     options = fields['fog_return']['options'].to_h { |option| [option['value'], option['label']] }
     expect(options).to include('4' => 'Sigil of Escape', '5' => 'Familiar Gate (930)', '6' => 'Custom return commands')
     expect(fields['uac_mstrike']['label']).to start_with('Disable')
-    expect(fields['dead_man_switch']['help']).to include('not a low-health logout trigger')
+    expect(fields['dead_man_switch']['help']).to include('when you die')
     expect(fields['tier3']['options'].map { |option| option['value'] }).to eq(%w[jab punch grapple kick])
   end
 
@@ -80,7 +80,7 @@ RSpec.describe EO::HunterSetup::Schema do
     expect(schema.search('oom').map { |field| field['key'] }).to include('oom')
     expect(schema.search('tail').map { |field| field['key'] }).to include('group_fried_trigger')
     expect(schema.search('ecleanse').map { |field| field['key'] }).to include('recovery')
-    expect(schema.search('spirit points').map { |field| field['key'] }).to include('rest_till_spirit')
+    expect(schema.search('rested spirit').map { |field| field['key'] }).to include('rest_till_spirit')
   end
 
   it 'uses native defaults without sharing mutable defaults with callers' do

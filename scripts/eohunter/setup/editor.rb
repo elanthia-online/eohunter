@@ -21,9 +21,9 @@ module EO
       # They label the sidebar, so they can say what the page is for.
       TITLES = {
         'area' => 'Where to hunt', 'creatures' => 'What to hunt', 'hunting' => 'Hunting behavior',
-        'monitoring' => 'When to return', 'rest' => 'Town rest', 'field' => 'Field rest & getting home',
-        'recovery' => 'Recovery & emergencies', 'combat' => 'Combat routines', 'unarmed' => 'Unarmed & MSTRIKE',
-        'equipment' => 'Equipment', 'buffs' => 'Buffs', 'preparations' => 'Preparations & scripts',
+        'rest' => 'Rest',
+        'recovery' => 'Recovery & emergencies', 'combat' => 'Combat',
+        'equipment' => 'Gear',
         'team' => 'Multi-account team'
       }.freeze
 
@@ -37,11 +37,10 @@ module EO
       # settings that only matter with other people.
       SECTIONS = [
         ['Profiles', %w[manage]],
-        ['The hunt', %w[area creatures hunting monitoring]],
-        ['Rest & recovery', %w[rest field recovery]],
-        ['Combat & equipment', %w[combat unarmed equipment buffs preparations]],
-        ['Hunting with others', %w[team]],
-        ['Finish', %w[review]]
+        ['The hunt', %w[creatures area hunting]],
+        ['Rest & recovery', %w[rest recovery]],
+        ['Combat & equipment', %w[combat equipment]],
+        ['Hunting with others', %w[team]]
       ].freeze
 
       # Pages that are not settings pages, with their titles and the section
@@ -50,7 +49,7 @@ module EO
       # comparison page yet, and a sidebar item leading nowhere is worse than
       # one that is missing.
       EXTRA_TITLES = {
-        'manage' => 'Manage profiles', 'review' => 'Review & save'
+        'manage' => 'Hunts'
       }.freeze
 
       # The sidebar's items, in section order: id, label, section.
@@ -125,6 +124,13 @@ module EO
       def fields_for(page)
         fields.select { |field| field['page'] == page }
       end
+
+      # Counts each time the whole draft is replaced. Lich keeps what a viewer
+      # sees in a box by the box's identity and ignores a later redraw's value,
+      # so the page's outer key carries this: a replaced draft gets new boxes,
+      # filled from the draft, and not the last hunt's values or blanks.
+      # @return [Integer]
+      def draft_serial = @draft_serial || 0
 
       # @return [Hash] this draft's settings, never nil
       def settings = @draft['settings'] ||= {}
@@ -267,6 +273,7 @@ module EO
           @revision = nil
           @draft = { 'schema_version' => 1, 'settings' => {} }
           @baseline = deep_copy(@draft)
+          @draft_serial = draft_serial + 1
         end
         note("Deleted #{name}. A backup was kept.")
       rescue StandardError => error
@@ -286,6 +293,7 @@ module EO
         @map = nil
         @sheet = nil
         @map_frame = nil
+        @draft_serial = draft_serial + 1
         note('Started a new hunt. Name it, then save.')
       end
 
@@ -315,6 +323,7 @@ module EO
         data['settings'] = kept.to_h
         @draft = data
         @baseline = { 'schema_version' => 1, 'settings' => {} }
+        @draft_serial = draft_serial + 1
         @validation = nil
         @map = nil
         unused = dropped.count { |(key, _)| !known.include?(key) }
@@ -341,6 +350,7 @@ module EO
         @map = nil
         @sheet = nil
         @map_frame = nil
+        @draft_serial = draft_serial + 1
         note("Loaded #{name}.")
       rescue StandardError => error
         # The list is rebuilt from disk before the message, so a hunt that has
@@ -408,6 +418,34 @@ module EO
       # The creatures matching the search.
       # @return [Array<Hash>]
       def creature_matches = Creatures.search(creature_catalogue, hunt_query)
+
+      # What the creature list is sorted by.
+      CREATURE_SORTS = { 'level' => 'Level', 'name' => 'Creature', 'family' => 'Family', 'areas' => 'Lives in' }.freeze
+
+      # @return [String] a CREATURE_SORTS key
+      def creature_sort = @creature_sort || 'level'
+
+      # The matches in the chosen order, ties by level then name.
+      # @return [Array<Hash>]
+      def sorted_creature_matches
+        creature_matches.sort_by do |creature|
+          first = case creature_sort
+                  when 'name' then creature[:name].to_s.downcase
+                  when 'family' then creature[:family].to_s.downcase
+                  when 'areas' then Array(creature[:areas]).join(', ').downcase
+                  else format('%04d', creature[:level].to_i)
+                  end
+          [first, creature[:level].to_i, creature[:name].to_s.downcase]
+        end
+      end
+
+      # Sort the creature list.
+      # @param key [String] a CREATURE_SORTS key
+      # @return [Boolean] whether to re-render
+      def on_creature_sort(key)
+        @creature_sort = CREATURE_SORTS.key?(key.to_s) ? key.to_s : 'level'
+        true
+      end
 
       # How many creatures the level band cannot place, having no recorded
       # level. They are found by name.
@@ -633,16 +671,74 @@ module EO
       def on_revert
         @draft = deep_copy(@baseline)
         @name = @loaded_name
+        @draft_serial = draft_serial + 1
         @validation = nil
         @map = nil
         note('Reverted to the last saved version.')
+      end
+
+      # @param key [String] a Cleanse preference
+      # @return [Object, nil] what this hunt says about it
+      def recovery_value(key) = recovery_settings[key]
+
+      # Why this character cannot use a Cleanse choice, read when setup
+      # opened; nil when it can, or when Lich could not say.
+      # @param key [String] a Cleanse preference
+      # @return [String, nil]
+      def recovery_unusable(key)
+        found = @boot[:recovery_unusable] || @boot['recovery_unusable'] || {}
+        found[key] || found[key.to_sym]
+      end
+
+      # Set one Cleanse preference. Off is simply absent, and ecleanse's window
+      # allows one stunman choice, so ticking one clears the others.
+      # @param key [String] a Cleanse preference
+      # @param value [Boolean, String]
+      # @return [Boolean] whether to re-render
+      def on_recovery_set(key, value)
+        wanted = recovery_settings.dup
+        Schema::RECOVERY_EXCLUSIVE.each { |other| wanted.delete(other) } if value == true && Schema::RECOVERY_EXCLUSIVE.include?(key)
+        if value == true || (value.is_a?(String) && !value.empty?)
+          wanted[key] = value
+        else
+          wanted.delete(key)
+        end
+        wanted.empty? ? settings.delete('recovery') : settings['recovery'] = wanted
+        @validation = nil
+        # Lich keeps a tick by its identity, so clearing a stunman choice from
+        # here needs new boxes; typing in the safe room must keep its box.
+        @draft_serial = draft_serial + 1 if value == true && Schema::RECOVERY_EXCLUSIVE.include?(key)
+        true
+      end
+
+      # @return [Boolean] whether standalone ecleanse has anything to import
+      def ecleanse_to_import?
+        !ecleanse_settings.empty?
+      end
+
+      # Copy standalone ecleanse's preferences into this draft, replacing the
+      # draft's, less any this character cannot use, as ecleanse's own window
+      # switches those off. Nothing is written until the hunt is saved.
+      # @return [Boolean] whether to re-render
+      def on_import_ecleanse
+        found = ecleanse_settings
+        return note('ecleanse has nothing set to import.', error: true) if found.empty?
+
+        skipped = found.keys.select { |key| recovery_unusable(key) }
+        found = found.reject { |key, _| skipped.include?(key) }
+        found.empty? ? settings.delete('recovery') : settings['recovery'] = found
+        @validation = nil
+        @draft_serial = draft_serial + 1
+        left_out = skipped.empty? ? '' : " Left out #{skipped.size} this character cannot use."
+        note("Imported #{found.size} ecleanse setting#{'s' if found.size != 1}.#{left_out} Save to keep them.")
       end
 
       # What each room role is called.
       ROLE_LABELS = {
         'hunting' => 'Hunting room', 'hunting_boundaries' => 'Boundary',
         'hunting_room_id' => 'Starting room', 'rallypoint_room_ids' => 'Rally room',
-        'field_rest_room_id' => 'Field rest', 'resting_room_id' => 'Town rest'
+        'field_rest_room_id' => 'Field rest', 'resting_room_id' => 'Town rest',
+        'creature' => 'Where the picked creature lives'
       }.freeze
 
       # The roles that hold several rooms, as comma text.
@@ -727,6 +823,12 @@ module EO
           # A click on the room that holds the role takes it away; a click
           # anywhere else moves the role there.
           return on_clear_room(role, id) if settings[role].to_s == id.to_s
+          # With a creature picked, the hunt starts where it lives: from
+          # anywhere else the boundaries, which ring its rooms, do not keep
+          # the walk to them, and it meets none of it.
+          if role == 'hunting_room_id' && !fence_rooms.empty? && !fence_rooms.include?(id.to_i)
+            return note("Room #{id} is not where #{fence_creature} lives. Pick one of its rooms, outlined in teal.", error: true)
+          end
 
           on_change(role, id)
         else
@@ -765,7 +867,8 @@ module EO
         'hunting_room_id'     => { 'r' => 47, 'g' => 109, 'b' => 214, 'a' => 0.95 },
         'rallypoint_room_ids' => { 'r' => 230, 'g' => 150, 'b' => 30, 'a' => 0.95 },
         'field_rest_room_id'  => { 'r' => 138, 'g' => 79, 'b' => 201, 'a' => 0.6 },
-        'resting_room_id'     => { 'r' => 201, 'g' => 70, 'b' => 120, 'a' => 0.6 }
+        'resting_room_id'     => { 'r' => 201, 'g' => 70, 'b' => 120, 'a' => 0.6 },
+        'creature'            => { 'r' => 0, 'g' => 150, 'b' => 160, 'a' => 0.9 }
       }.freeze
 
       # How far the map can be zoomed: a range a player can get back from.
@@ -863,41 +966,80 @@ module EO
         index ? on_select_page(index) : false
       end
 
+      # The page tabs' component ID in the last render, so the session can
+      # set which tab the viewer has selected.
+      # @return [String, nil]
+      attr_accessor :tabs_cid
+
       # --- What lives in the hunt's rooms, and the boons ---------------------
 
       # @return [Array<Hash>] the boons the target reader knows: key, label,
       #   adjectives and effect
       def boon_abilities = Array(@boot[:boon_abilities] || @boot['boon_abilities'])
 
-      # Whether the aiming orders are shown on Combat routines. Off until
-      # asked for, like the map.
-      # @return [Boolean]
-      def aiming_open? = @aiming_open == true
+      # @param name [String] a folded group's heading
+      # @return [Boolean] whether that group is open
+      def fold_open?(name) = (@open_folds ||= {})[name] == true
 
-      # Show or hide them.
+      # Open or close a folded group.
+      # @param name [String] its heading
       # @return [Boolean] whether to re-render
-      def on_toggle_aiming
-        @aiming_open = !aiming_open?
+      def on_toggle_fold(name)
+        (@open_folds ||= {})[name] = !fold_open?(name)
         true
       end
 
-      # Whether the creatures found in the hunt's rooms are listed. Off until
-      # asked for, like the map.
-      # @return [Boolean]
-      def creatures_open? = @creatures_open == true
+      # The rooms the hunt walks from its start, inside its boundaries.
+      # @return [Array<Integer>]
+      def hunt_rooms
+        return [] if settings['hunting_room_id'].to_s.empty?
 
-      # Show or hide that list.
-      # @return [Boolean] whether to re-render
-      def on_toggle_creatures
-        @creatures_open = !creatures_open?
-        true
+        Array(map && map[:hunting_room_ids])
+      end
+
+      # The rooms the last pick fenced, for this draft only.
+      # @return [Array<Integer>]
+      def fence_rooms = fence_part(:rooms) || []
+
+      # One part of the last pick's fence, for this draft only.
+      def fence_part(part) = @fence && @fence[:serial] == draft_serial ? @fence[part] : nil
+
+      # The fence's separate areas, each a list of room ids, largest first.
+      # @return [Array<Array<Integer>>]
+      def fence_areas = fence_part(:areas) || []
+
+      # The creature the fence was made for, for this draft.
+      # @return [String, nil]
+      def fence_creature = fence_part(:creature)
+
+      # Before a start room: the creatures of each of the fence's areas,
+      # when there is more than one. A hunt walks one area, so a list of
+      # them all mixed creatures it would never meet in with those it would.
+      # @return [Array<Hash>] rooms and creatures per area; empty when the
+      #   hunt has a start room or the fence is one area
+      def creatures_by_area
+        areas = fence_areas
+        return [] if areas.size < 2 || !hunt_rooms.empty?
+
+        if @creatures_by_area_for != areas
+          @creatures_by_area_for = areas
+          @creatures_by_area = areas.map do |rooms|
+            { rooms: rooms, creatures: Array(@app.call('action' => 'creatures_here', 'room_ids' => rooms))
+                                       .sort_by { |creature| [creature[:level] || 999, creature[:name].to_s] } }
+          end
+        end
+        @creatures_by_area
+      rescue StandardError => error
+        note(error.message, error: true)
+        []
       end
 
       # The creatures the templates place in the rooms the hunt walks now,
       # by level then name. Empty when the hunt has no rooms yet.
       # @return [Array<Hash>] name, level, undead
       def creatures_here
-        rooms = Array(map && map[:hunting_room_ids])
+        rooms = hunt_rooms
+        rooms = fence_rooms if rooms.empty?
         return [] if rooms.empty?
 
         if @creatures_here_for != rooms
@@ -1067,12 +1209,17 @@ module EO
       # Whether the creature search is shown on Where to hunt. Off until
       # asked for, like the map.
       # @return [Boolean]
-      def creature_search_open? = @creature_search_open == true
+      def creature_search_open?
+        return @creature_search_open if @creature_search_for == draft_serial
+
+        list_entries('targets').empty?
+      end
 
       # Show or hide it.
       # @return [Boolean] whether to re-render
       def on_toggle_creature_search
         @creature_search_open = !creature_search_open?
+        @creature_search_for = draft_serial
         true
       end
 
@@ -1081,31 +1228,71 @@ module EO
       # @return [Array<Hash>] id and name
       def sheet_choices = Array(@sheet_choices)
 
-      # A creature was picked in the search: open the map on the sheet its
-      # rooms are drawn on. On one sheet, that sheet; on several, they are
-      # offered beside the Find box and the sheet stays as it was. Nothing
-      # is written to the draft: rooms come from clicking the map, creatures
-      # from the list on What to hunt.
+      # A creature was picked in the search: it is the hunt's creature. The
+      # boundaries become the ring around every room it lives in, replacing
+      # what was there, since one hunt is one area. A new fence makes it the
+      # only target; the same fence adds it to them. The map gets its sheet
+      # ready with a left-click setting the start room, and the creatures in
+      # the fence are listed under the search to tick. A start room outside
+      # the new fence is cleared: it belonged to another hunt.
       # @param name [String] the creature's name
       # @return [Boolean] whether to re-render
       def on_find_creature(name)
         wanted = name.to_s
         return false if wanted.empty?
 
-        sheets = Array(@app.call('action' => 'creature_sheets', 'name' => wanted))
-        return note("No mapped rooms are recorded for #{wanted}.", error: true) if sheets.empty?
+        fence = @app.call('action' => 'creature_fence', 'name' => wanted)
+        rooms = Array(fence[:room_ids])
+        return note("No mapped rooms are recorded for #{wanted}.", error: true) if rooms.empty?
 
+        boundaries = Array(fence[:boundary_ids]).map(&:to_s)
+        moved = list_entries('hunting_boundaries').sort != boundaries.sort
+        write_list('hunting_boundaries', boundaries)
+        start = settings['hunting_room_id'].to_s
+        on_change('hunting_room_id', '') unless start.empty? || rooms.include?(start.to_i)
+        before = list_entries('targets')
+        targets = moved ? [wanted] : (before + [wanted]).uniq { |entry| entry.split('(').first.strip.downcase }
+        write_list('targets', targets)
+        @fence = { serial: draft_serial, rooms: rooms, areas: Array(fence[:areas]), creature: wanted }
+        # Open from here on, though the hunt now has a target: the viewer is
+        # still choosing.
+        @creature_search_open = true
+        @creature_search_for = draft_serial
+        @creatures_here_for = nil
+        @assign_role = 'hunting_room_id'
         @room_query = wanted
         @room_matches = []
         @map_open = true
+        @map = nil
+        @map_frame = nil
+        sheets = Array(fence[:sheets])
         if sheets.size == 1
-          show_sheet(sheets.first[:id], "Showing #{sheets.first[:name]}, where #{wanted} lives.")
+          @sheet = sheets.first[:id].to_s
+          @sheet_choices = []
         else
+          @sheet = nil
           @sheet_choices = sheets
-          note("#{wanted} lives on #{sheets.size} sheets; pick one.")
         end
+        pockets = fence[:pockets].to_i
+        where = pockets > 1 ? "its #{pockets} areas" : 'where it lives'
+        dropped = moved && !(before - targets).empty? ? " Targets were #{before.join(', ')}." : ''
+        note("Hunting #{wanted}: fenced #{where}.#{dropped} Tick what else to hunt below, then choose the start room.")
       rescue StandardError => error
         note(error.message, error: true)
+      end
+
+      # A creature's details, for the popup.
+      # @param name [String] the creature's name
+      # @return [Hash, nil] title and lines, or nil with the reason noted
+      def creature_details(name)
+        found = @app.call('action' => 'creature_details', 'name' => name.to_s)
+        return found unless Array(found[:lines]).empty?
+
+        note("Nothing is recorded about #{name}.", error: true)
+        nil
+      rescue StandardError => error
+        note(error.message, error: true)
+        nil
       end
 
       # Whether the map is drawn. Off until asked for: a sheet is hundreds of
@@ -1130,7 +1317,7 @@ module EO
       # @return [Boolean] whether to re-render
       def on_assign_role(role)
         wanted = role.to_s
-        return note("#{wanted} is not a room role.", error: true) unless ROLE_LABELS.key?(wanted) && wanted != 'hunting'
+        return note("#{wanted} is not a room role.", error: true) unless ROLE_LABELS.key?(wanted) && !%w[hunting creature].include?(wanted)
 
         @assign_role = wanted
         true
@@ -1208,6 +1395,18 @@ module EO
       end
 
       private
+
+      def recovery_settings
+        value = settings['recovery']
+        value.is_a?(Hash) ? value.transform_keys(&:to_s) : {}
+      end
+
+      def ecleanse_settings
+        Hash(@app.call('action' => 'ecleanse_settings'))
+      rescue StandardError => error
+        note("Could not read ecleanse: #{error.message}", error: true)
+        {}
+      end
 
       def refresh_boot
         @boot = @app.call('action' => 'bootstrap')

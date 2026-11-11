@@ -243,6 +243,51 @@ module EO
         maps_for_uids(uids)
       end
 
+      # The fence for a creature: every room its templates place it in, in
+      # every area it lives in, and the ring of rooms just outside them, as
+      # Lich's CreatureTemplate#boundary_rooms has it. A creature in three
+      # separate pockets gets three rings, one boundary list.
+      # @param name [String] the creature as the templates name it
+      # @return [Hash] room_ids, boundary_ids, pockets (how many separate
+      #   groups of rooms), areas (those groups' room ids) and sheets (as
+      #   #creature_sheets)
+      def creature_fence(name)
+        wanted = name.to_s
+        templates = @templates.select { |t| t.name.to_s.casecmp?(wanted) }
+        uids = templates.flat_map { |t| Array(t.areas).flat_map { |area| area_uids(area) } }.uniq
+        ids = resolve_uids(uids)[:room_ids]
+        return { room_ids: [], boundary_ids: [], pockets: 0, areas: [], sheets: [] } if ids.empty?
+
+        # The separate groups of its rooms, largest first: a hunt starts in
+        # one and walks only that one.
+        areas = components(ids, footprint_graph(ids)[:edges]).sort_by { |area| [-area.size, area.first] }
+        { room_ids: ids, boundary_ids: hunt_boundaries(ids, ids), pockets: areas.size, areas: areas,
+          sheets: maps_for_uids(uids) }
+      end
+
+      # A creature's details for the popup: Creatures.details, then each
+      # area it lives in with how many of its rooms are on the map.
+      # @param name [String] the creature as the templates name it
+      # @return [Hash] title and lines ([style, text]); lines empty when the
+      #   creature is unknown
+      def creature_details(name)
+        template = @templates.find { |t| t.name.to_s.casecmp?(name.to_s) }
+        return { title: name.to_s, lines: [] } unless template
+
+        lines = Creatures.details(template)
+        areas = Array(template.areas)
+        unless areas.empty?
+          lines << [:head, 'Lives in']
+          areas.each do |area|
+            uids = area_uids(area)
+            mapped = resolve_uids(uids)[:room_ids].size
+            lines << [:line, "#{area[:name]}: #{uids.size} room#{'s' if uids.size != 1} recorded, #{mapped} on the map"]
+          end
+        end
+        level = template.respond_to?(:level) && template.level ? ", level #{template.level}" : ''
+        { title: "#{template.name}#{level}", lines: lines }
+      end
+
       def creatures_in_rooms(room_ids)
         ids = Array(room_ids).map { |id| id.to_i }.select { |id| @rooms.key?(id) }
         return [] if ids.empty?
