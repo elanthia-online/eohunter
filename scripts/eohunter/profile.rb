@@ -53,6 +53,7 @@ module EO::Engine
       'loot_script' => [:string, nil], 'wracking_spirit' => [:to_i, 0],
       'turbo' => [:string, 'off'], 'priority' => [:bool, false], 'delay_loot' => [:bool, false], 'use_wracking' => [:bool, false], 'loot_stance' => [:bool, false],
       'pull' => [:bool, true], 'deader' => [:bool, false], 'sneaky_sneaky' => [:bool, false], 'check_favor' => [:bool, false],
+      'track' => [:bool, false], 'track_creature' => [:string, nil],
       'ambush' => [:split, []], 'archery_aim' => [:split, []], 'flee_count' => [:to_i, 100], 'invalid_targets' => [:split, []],
       'always_flee_from' => [:split, []], 'flee_message' => [:regex, nil], 'wander_wait' => [:to_f, 0.3],
       'flee_clouds' => [:bool, false], 'flee_vines' => [:bool, false], 'flee_webs' => [:bool, false], 'flee_voids' => [:bool, false],

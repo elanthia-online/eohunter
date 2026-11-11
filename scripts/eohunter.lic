@@ -1086,7 +1086,7 @@ end
 # with a bandit bounty in hand silently swapped its targets for the bandit
 # nouns and stopped fleeing. The `bandits` word still works on its own.
 tracking = EO::Engine::Tracking.policy_from(options.reject { |o| o =~ /^dry$/i },
-                                            task: bounty_mode ? bounty_task : nil)
+                                            task: bounty_mode ? bounty_task : nil, profile: profile)
 controlled&.admit_profile!(profile)
 trial&.admit_profile!(profile)
 profile.validate_rest_mode!(mode, controlled: !controlled.nil?, bounty: bounty_mode)

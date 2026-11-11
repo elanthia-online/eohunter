@@ -50,6 +50,8 @@ YAML null, blank string, or wrong container type is a configuration error.
 | `wander_wait` | float | 0.3 | Wander: seconds between steps |
 | `ignore_disks` | bool | false | Wander: do not wait for a disk to follow |
 | `sneaky_sneaky` | bool | false | Wander and Rest: hide before stepping, `movement autosneak` on trips |
+| `track` | bool | false | Wander, Rangers only: TRACK `track_creature` once per room before stepping on |
+| `track_creature` | string | none | Wander: the creature `track` follows, as the game's TRACK takes it. `track <creature>` on the command line, or the creature bounty mode is given, is used instead for that run |
 
 ## Resting
 
