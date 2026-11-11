@@ -31,6 +31,35 @@ RSpec.describe EO::HunterSetup::Editor do
     expect(placed.map { |field| field['key'] }).to match_array(editor.fields.map { |field| field['key'] })
   end
 
+  describe 'Ranger tracking' do
+    def app_for(profession)
+      EO::HunterSetup::Runtime.app(
+        data_dir: @directory, game: 'GSIV', character: 'Example', profession: profession,
+        char_settings: {}, templates: [], rooms: [], uid_resolver: ->(_uid) { [] }
+      )
+    end
+
+    def tracking_keys(profession)
+      described_class.new(app: app_for(profession)).fields.map { |field| field['key'] } & %w[track track_creature]
+    end
+
+    it 'shows track and track_creature on What to hunt to a Ranger, and to no one else' do
+      ranger = described_class.new(app: app_for('Ranger'))
+      expect(ranger.fields_for('creatures').map { |field| field['key'] }).to include('track', 'track_creature')
+      expect(tracking_keys('Wizard')).to be_empty
+      expect(tracking_keys('')).to be_empty
+    end
+
+    it "warns when a non-Ranger's hunt has tracking on, and only then" do
+      data = { 'schema_version' => 1, 'settings' => { 'track' => true, 'track_creature' => 'giant rat' } }
+      warned = ->(profession) { app_for(profession).call('action' => 'validate', 'data' => data)[:warnings].any? { |w| w['key'] == 'track' } }
+      expect(warned.call('Wizard')).to be(true)
+      expect(warned.call('Ranger')).to be(false)
+      off = data.merge('settings' => { 'track' => false })
+      expect(app_for('Wizard').call('action' => 'validate', 'data' => off)[:warnings].map { |w| w['key'] }).not_to include('track')
+    end
+  end
+
   it 'starts clean and reports unsaved edits' do
     expect(editor).not_to be_dirty
     editor.on_change('hunting_stance', 'offensive')

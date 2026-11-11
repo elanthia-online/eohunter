@@ -178,6 +178,7 @@ module EO
         warnings = Array(checked[:warnings])
         warnings += RoutineCheck.warnings(checked[:normalized] || {}, scripts: @scripts) if kind == 'profiles'
         warnings += result.warnings if result.respond_to?(:warnings)
+        warnings += ranger_only_warnings(checked[:normalized] || {}) if kind == 'profiles'
         advisory = @hazards&.check(result.raw, area: area || data['area'], uid_ids: @uid_ids)
         warnings += Array(advisory['warnings']) if advisory
         {
@@ -187,6 +188,15 @@ module EO
           hazard_coverage: advisory && advisory['coverage'],
           note: 'Configuration validation does not prove combat effectiveness or area safety.'
         }
+      end
+
+      # Tracking is set but this character is not a Ranger: the hunt would
+      # quietly never track, and the editor does not show the setting.
+      def ranger_only_warnings(normalized)
+        profession = (@context[:profession] || @context['profession']).to_s
+        return [] if profession.empty? || profession.match?(/ranger/i) || !normalized['track']
+
+        [{ 'key' => 'track', 'message' => "Track is on, but only a Ranger can track and this character is a #{profession}; the hunt will not track.", 'kind' => 'not_used' }]
       end
 
       def missing_map_rooms(normalized)
