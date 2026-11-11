@@ -23,7 +23,7 @@ with bigshot line references, are in the engine plan.
 | Group | group.rb | the leader's Hub over DRb, the follower's Member, and the follower behaviors |
 | Controller | controller.rb | opt-in supervision for Lich Agent Bridge; not part of ordinary hunting |
 | Coordination | coordination.rb, coordination_hold.rb | opt-in adapters over the `libeocoordination` library: a read-only projection of group state, and the safe-room hold; loading them starts nothing |
-| Setup | setup/ | the hunt editor `;eohunter setup` opens: a GTK window over a setup core that stores, validates and composes hunts without touching the game |
+| Setup | setup/ | the hunt editor `;eohunter setup` opens: a page in Lich's WebUI over a setup core that stores, validates and composes hunts without touching the game |
 
 The behaviors, one file each, are listed below. The script,
 `eohunter.lic`, is the wiring: it loads the engine, reads the profile,

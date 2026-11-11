@@ -43,13 +43,25 @@ From the parts: copy `scripts/eohunter.lic`, `scripts/eohunter/`,
 ;eohunter setup
 ```
 
-opens a window for hunts. Pick a Bigshot profile and Import it to start
-from one you have, or New for an empty hunt. Change settings page by
-page, then Validate: it checks the hunt against the installed engine and
-lists errors and warnings under the settings they belong to and on the
-Review page. Save writes the hunt to
-`data/<game>/<char>/eohunter/profiles/<name>.yaml`; the Bigshot profile
-is never written.
+opens the hunt editor in Lich's WebUI. Along the top: Hunt opens a saved
+hunt, Bigshot imports a Bigshot profile as an unsaved copy, New starts an
+empty one. The pages down the side follow a hunt from start to finish:
+
+- **Hunts:** your saved hunts; tick one as the Default that `;eohunter`
+  alone runs.
+- **What to hunt** and **Where to hunt:** find creatures by level, type
+  and family, and pick the rooms on the map.
+- **Hunting behavior**, **Rest**, **Recovery & emergencies**, **Combat**,
+  **Gear**, **Multi-account team:** every other setting. Recovery is
+  where Cleanse's settings live, with Import from ecleanse to copy them
+  in once. A setting that takes a Ruby condition has Test now beside it,
+    which runs it the way the hunt would.
+
+Validate checks the hunt against the installed engine and shows errors
+and warnings under the settings they belong to. Save writes it to
+`data/<game>/<char>/eohunter/profiles/<name>.yaml`; a saved hunt wins
+over a Bigshot profile of the same name, and the Bigshot profile is never
+written.
 
 ## The first run
 
@@ -87,7 +99,8 @@ whether the profile says what you meant.
 
 | Command | What it does |
 |---|---|
-| `;eohunter <profile>` | hunt: prep, walk to the hunting room, fight, loot, rest, repeat |
+| `;eohunter` | hunt with the Default hunt, ticked on the Hunts page of `;eohunter setup` |
+| `;eohunter <profile>` | hunt: prep, walk to the hunting room, fight, loot, rest, repeat; the hunt `;eohunter setup` saved under that name, else the Bigshot profile |
 | `;eohunter <profile> dry` | load and report only |
 | `;eohunter <profile> bandits` | bandit mode: the bandit nouns on the quick routine, no target switch, no flee past `always_flee_from`; also on in bounty mode when the bounty says "suppress bandit activity", never from a bandit task merely held |
 | `;eohunter <profile> track <creature>` | Rangers: TRACK toward the creature before each step |
