@@ -3,6 +3,8 @@
   bigshot's rules. The engine lives in scripts/eohunter/*.rb (namespace
   EO::Engine); this file wires a bigshot profile to it and runs the loop.
 
+    ;eohunter                              hunt with the Default hunt, ticked on the Hunts page of ;eohunter setup
+    ;eohunter dry | head <count> | ...     the same options, for the Default hunt
     ;eohunter <profile>                    hunt with the profile ;eohunter setup saved, else bigshot_profiles/<profile>.yaml
     ;eohunter <profile> dry                load the profile, report the policies, do not run
     ;eohunter <profile> bandits            hunt bandits (also on when the bounty says so)
@@ -938,9 +940,29 @@ options = script.vars[2..].to_a.map(&:to_s)
 controlled, options = EO::Engine::Controller::Launch.extract!(options)
 trial, options = EO::Engine::Controller::TrialSequence.extract!(options)
 dry = options.any? { |o| o =~ /^dry$/i }
+# An option first -- ;eohunter dry, ;eohunter head 2 -- is an option for the
+# Default hunt, unless a hunt is named that.
+if name =~ /\A(dry|bandits|track|head|lead|tail|follow|debug(=.*)?)\z/i && !File.exist?(EOHunter.profile_path(name))
+  options.unshift(name)
+  dry ||= name =~ /\Adry\z/i ? true : false
+  name = ''
+end
+# No name: the Default hunt, the one ticked on the Hunts page of setup.
 if name.empty?
-  EOHunter.msg('error', 'usage: ;eohunter <profile> [dry] [bandits] [track <creature>] [head <count> [lan]|tail [uri]]  or  ;eohunter bounty [<creature>] [head <count>|tail]  or  ;eohunter setup  or  ;eohunter reload')
-  exit
+  load File.join(SCRIPT_DIR, 'eohunter', 'setup', 'composition.rb')
+  begin
+    name = EO::HunterSetup::Composition.active_profile_name(data_dir: DATA_DIR, game: XMLData.game, character: Char.name).to_s
+  rescue ArgumentError, EO::HunterSetup::Store::Error => e
+    EOHunter.msg('error', "the Default hunt cannot be read (#{e.message}); tick another on the Hunts page of ;eohunter setup")
+    exit
+  end
+  if name.empty?
+    EOHunter.msg('error', 'no Default hunt: tick one on the Hunts page of ;eohunter setup, or name one: ' \
+                          ';eohunter <profile> [dry] [bandits] [track <creature>] [head <count> [lan]|tail [uri]]  or  ' \
+                          ';eohunter bounty [<creature>] [head <count>|tail]  or  ;eohunter setup  or  ;eohunter reload')
+    exit
+  end
+  EOHunter.msg('info', "hunting the Default hunt, #{name}")
 end
 
 # Forget everything loaded, so the next run reads the files as they are now.
