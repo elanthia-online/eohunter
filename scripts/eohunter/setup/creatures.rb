@@ -96,6 +96,120 @@ module EO
         words.empty? ? '' : words[0].upcase + words[1..]
       end
 
+      # A creature's details as lines for the details popup, each
+      # [style, text] with style :head or :line, after Bigshot Profiles'
+      # detail panel. Anything the template does not record is left out.
+      # @param template [Object] a creature template
+      # @return [Array<Array(Symbol, String)>]
+      def details(template)
+        out = []
+        line = lambda do |label, raw|
+          shown = shown(raw)
+          out << [:line, "#{label}: #{shown}"] if shown
+        end
+        kind = %i[family type size].filter_map { |field| shown(value(template, field)) }.join(' ')
+        kind += ', undead' if value(template, :undead) == true
+        kind += ", #{value(template, :boss_type) || 'boss'}" if value(template, :boss) == true
+        out << [:line, kind] unless kind.empty?
+        line.call('Max HP', value(template, :max_hp))
+        line.call('Speed', value(template, :speed))
+        line.call('Boon-capable', value(template, :bcs)) unless value(template, :bcs).nil?
+        line.call('Wiki', value(template, :url))
+
+        if (attack = value(template, :attack_attributes))
+          out << [:head, 'Attacks']
+          line.call('Physical', named(value(attack, :physical_attacks), :as))
+          line.call('Bolts', named(value(attack, :bolt_spells), :as))
+          line.call('Warding', named(value(attack, :warding_spells), :cs))
+          line.call('Offensive spells', named(value(attack, :offensive_spells), :cs))
+          line.call('Maneuvers', named(value(attack, :maneuvers), :as))
+          line.call('Special', Array(value(attack, :special_abilities)).map do |ability|
+            note = value(ability, :note).to_s
+            note.empty? ? value(ability, :name).to_s : "#{value(ability, :name)} (#{note})"
+          end)
+        end
+
+        if (defense = value(template, :defense_attributes))
+          out << [:head, 'Defense']
+          line.call('Armor', value(defense, :asg))
+          line.call('DS', { 'melee' => :melee, 'ranged' => :ranged, 'bolt' => :bolt, 'UDF' => :udf }.filter_map do |label, field|
+            found = shown(value(defense, field))
+            "#{label} #{found}" if found
+          end)
+          line.call('TD', TD_FIELDS.filter_map do |label, field|
+            found = shown(value(defense, field))
+            "#{label} #{found}" if found
+          end)
+          line.call('Immunities', value(defense, :immunities))
+          line.call('Defensive spells', named(value(defense, :defensive_spells), :ds))
+          line.call('Defensive abilities', named(value(defense, :defensive_abilities), :note))
+          line.call('Special defenses', named(value(defense, :special_defenses), :note))
+        end
+
+        treasure = value(template, :treasure)
+        treasure = treasure.to_h if treasure.respond_to?(:to_h)
+        if treasure.is_a?(Hash) && !treasure.empty?
+          out << [:head, 'Treasure']
+          drops = %i[coins gems boxes].select { |field| treasure[field] }.map(&:to_s)
+          drops << 'skin' if treasure[:skin]
+          drops << 'magic items' if treasure[:magic_items]
+          line.call('Drops', drops)
+          line.call('Skin', treasure[:skin]) if treasure[:skin].is_a?(String)
+          line.call('Other', treasure[:other])
+          line.call('Armaments', treasure[:armaments])
+          line.call('Transmogs', treasure[:transmogs])
+          line.call('Blunt required', true) if treasure[:blunt_required]
+        end
+
+        info = value(template, :messaging)
+        info = info.instance_variable_get(:@info) if info && !info.is_a?(Hash)
+        if info.is_a?(Hash)
+          general = Array(info[:general]).map(&:to_s).reject(&:empty?)
+          tips = (info[:class_tips] || {}).select { |_, list| Array(list).any? { |tip| !tip.to_s.empty? } }
+          unless general.empty? && tips.empty?
+            out << [:head, 'Tips']
+            general.each { |tip| out << [:line, tip] }
+            tips.each do |profession, list|
+              out << [:line, "#{profession.to_s.capitalize}:"]
+              Array(list).each { |tip| out << [:line, "  #{tip}"] }
+            end
+          end
+        end
+        out
+      end
+
+      # Target defense by spell circle, as the templates name them.
+      TD_FIELDS = { 'Bard' => :bar_td, 'Cleric' => :cle_td, 'Empath' => :emp_td, 'Paladin' => :pal_td,
+                    'Ranger' => :ran_td, 'Sorcerer' => :sor_td, 'Wizard' => :wiz_td, 'Maj Elem' => :mje_td,
+                    'Min Elem' => :mne_td, 'Maj Spirit' => :mjs_td, 'Min Spirit' => :mns_td, 'Min Mental' => :mnm_td }.freeze
+
+      # A template value as text, or nil for nothing worth a line.
+      # @return [String, nil]
+      def shown(raw)
+        case raw
+        when nil, '' then nil
+        when true then 'yes'
+        when false then 'no'
+        when Range then "#{raw.first}-#{raw.last}"
+        when Array
+          parts = raw.filter_map { |item| shown(item) }
+          parts.empty? ? nil : parts.join(', ')
+        when Hash then raw.map { |key, item| "#{key}: #{shown(item)}" }.join(', ')
+        else raw.to_s
+        end
+      end
+
+      # Named entries with one figure each, as "name (figure)".
+      # @return [Array<String>]
+      def named(items, field)
+        Array(items).filter_map do |item|
+          next shown(item) unless item.is_a?(Hash)
+
+          figure = shown(item[field])
+          figure ? "#{item[:name]} (#{figure})" : item[:name].to_s
+        end
+      end
+
       # Every creature, described.
       # @param templates [Enumerable]
       # @return [Array<Hash>]

@@ -13,13 +13,16 @@ module EO
       # @param uid_ids [#call, nil] native read-only UID resolver
       # @param room_lookup [#call, nil] native map lookup by room ID
       # @param hazards [Hazards, nil] optional advisory coverage
+      # @param ecleanse [#call, nil] reads standalone ecleanse's preferences
       # @param map_images [MapImages, nil] allowlisted installed raster maps
       # @param society_abilities [Hash] read-only native ability snapshot
+      # @param recovery_unusable [Hash{String => String}] Cleanse choices this
+      #   character cannot use, and why
       # @param ready_list [Hash] ReadyList slots and what is readied in them
       # @param inventory [Array<Hash>] carried items as {noun:, name:, types:}
       # @param scripts [Array<String>, nil] installed script names, for the
       #   routine check
-      def initialize(store:, schema:, geography: nil, context: {}, uid_ids: nil, room_lookup: nil, hazards: nil, map_images: nil, society_abilities: {}, ready_list: {}, inventory: [], armaments: {}, scripts: nil)
+      def initialize(store:, schema:, geography: nil, context: {}, uid_ids: nil, room_lookup: nil, hazards: nil, ecleanse: nil, map_images: nil, society_abilities: {}, recovery_unusable: {}, ready_list: {}, inventory: [], armaments: {}, scripts: nil)
         @store = store
         @schema = schema
         @geography = geography
@@ -27,8 +30,10 @@ module EO
         @uid_ids = uid_ids
         @room_lookup = room_lookup
         @hazards = hazards
+        @ecleanse = ecleanse
         @map_images = map_images
         @society_abilities = society_abilities
+        @recovery_unusable = recovery_unusable
         @ready_list = ready_list
         @inventory = inventory
         @armaments = armaments
@@ -75,6 +80,7 @@ module EO
         when 'validate' then validate(request.fetch('data'), request.fetch('mode', 'solo'), request['area'], request.fetch('kind', 'profiles'))
         when 'creature_sequence'
           Composition.new(store: @store).assign_creature_sequence(request.fetch('data'), creature: request.fetch('creature'), commands: request.fetch('commands'))
+        when 'ecleanse_settings' then @ecleanse ? @ecleanse.call : {}
         when 'areas' then @geography ? @geography.areas : []
         when 'map_image'
           raise ArgumentError, 'Classic map images are unavailable in this installation.' unless @map_images
@@ -107,6 +113,14 @@ module EO
           raise ArgumentError, 'native creature data is unavailable' unless @geography
 
           @geography.creature_sheets(request.fetch('name'))
+        when 'creature_details'
+          raise ArgumentError, 'native creature data is unavailable' unless @geography
+
+          @geography.creature_details(request.fetch('name'))
+        when 'creature_fence'
+          raise ArgumentError, 'native creature/map data is unavailable' unless @geography
+
+          @geography.creature_fence(request.fetch('name'))
         when 'area'
           raise ArgumentError, 'native creature/map data is unavailable' unless @geography
 
@@ -129,6 +143,7 @@ module EO
           boon_abilities: @schema.boon_abilities,
           routine_buff_conditions: @schema.routine_buff_conditions,
           society_abilities: @society_abilities,
+          recovery_unusable: @recovery_unusable,
           ready_list: @ready_list,
           inventory: @inventory,
           armaments: @armaments,

@@ -445,7 +445,8 @@ explicit loadout failure, not permission to attack with a different weapon.
 
 Cleanse reads the hunt's `recovery` mapping, with ecleanse's own keys:
 which afflictions to treat, which hazards to dispel, disarm recovery,
-hive traps. Set them on the Recovery page of `;eohunter setup`, for
-example `cleanse_poison: true`. Anything left out is off. eohunter
-never reads or writes `ecleanse.yaml`. A Bigshot profile has no `recovery`, so Cleanse does nothing
+hive traps. Tick them on the Recovery page of `;eohunter setup`.
+Anything left out is off. Import from ecleanse there copies ecleanse's
+settings into the hunt once; hunting never reads `ecleanse.yaml`, and
+nothing writes it. A Bigshot profile has no `recovery`, so Cleanse does nothing
 on one beyond `troubadours_rally` until it is saved as a hunt.

@@ -55,7 +55,8 @@ script refuses to start and says to update.
 profile, change its settings, validate it against the installed engine,
 and save it as an eohunter hunt. It never writes to a Bigshot profile.
 Cleanse takes its settings from the hunt's `recovery` mapping, on the
-Recovery page of `;eohunter setup`; it does not read `ecleanse.yaml`. A
+Recovery page of `;eohunter setup`, where Import from ecleanse copies
+ecleanse's settings in once; hunting never reads `ecleanse.yaml`. A
 profile's `troubadours_rally`, `signs` entries such as
 `650 panther evoke`, and `quick_commands` (used by bandit mode) all work
 as they do in bigshot.

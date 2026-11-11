@@ -46,7 +46,10 @@ module EO
             editor.window_size = page.window_geometry&.slice(:width, :height)
             Lich::API.webui_refresh(page)
           },
-          confirm: ->(what, &change) { confirm(owner, what, &change) }
+          confirm: ->(what, &change) { confirm(owner, what, &change) },
+          details: ->(found) { details(owner, found) },
+          ask: ->(**question, &answer) { ask(owner, **question, &answer) },
+          set_view: ->(cid, property, value) { page&.set(cid, property, value) }
         )
         Page.map_route = serve_maps(owner)
         # The window closes with this script: the page is owned by it, so
@@ -104,21 +107,61 @@ module EO
       #   false when they keep editing or the dialog went unanswered
       # @return [void]
       def confirm(owner, what, &change)
-        @confirm_serial = @confirm_serial.to_i + 1
+        ask(owner, title: 'Unsaved changes', body: "#{what} and lose the unsaved changes?",
+                   yes: 'Discard the changes', no: 'Keep editing', &change)
+      end
+
+      # A yes-or-no question in a dialog. The answer arrives on the page's
+      # own queue, so it is handed to the block rather than awaited; an
+      # unanswered dialog is a no.
+      # @param owner [Object] the script that owns the page
+      # @param title [String] the dialog's title
+      # @param body [String] the question
+      # @param yes [String] the label of the button that agrees
+      # @param no [String] the label of the one that does not
+      # @yield [agreed] true when the viewer chose yes
+      # @return [void]
+      def ask(owner, title:, body:, yes:, no: 'Cancel', &answer)
+        @ask_serial = @ask_serial.to_i + 1
         future = Lich::API.webui_modal(
-          owner: owner, id: "#{PAGE_ID}-confirm-#{@confirm_serial}", title: 'Unsaved changes',
-          body: "#{what} and lose the unsaved changes?",
-          buttons: [{ id: 'discard', label: 'Discard the changes', variant: :danger },
-                    { id: 'keep', label: 'Keep editing' }],
-          no_viewer: :abort, default_button: 'keep'
+          owner: owner, id: "#{PAGE_ID}-ask-#{@ask_serial}", title: title, body: body,
+          buttons: [{ id: 'yes', label: yes, variant: :danger }, { id: 'no', label: no }],
+          no_viewer: :abort, default_button: 'no'
         )
-        future.then { |result| change.call(result.button == 'discard') }
+        future.then { |result| answer.call(result.button == 'yes') }
+      end
+
+      # A creature's details in a popup, scrolling when they run long. Nothing
+      # waits on it: Close is the only answer.
+      # @param owner [Object] the script that owns the page
+      # @param found [Hash] title and lines ([style, text]) from the editor
+      # @return [void]
+      def details(owner, found)
+        @details_serial = @details_serial.to_i + 1
+        Lich::API.webui_modal(
+          owner: owner, id: "#{PAGE_ID}-creature-#{@details_serial}", title: found[:title].to_s,
+          buttons: [{ id: 'close', label: 'Close' }], no_viewer: :abort, default_button: 'close',
+          props: { width: 560 }
+        ) do |ui|
+          ui.scroll(key: 'details', height: 480) do
+            ui.stack(key: 'lines', gap: 2) do
+              Array(found[:lines]).each_with_index do |(style, text), index|
+                if style == :head
+                  ui.text(key: "l#{index}", content: text.to_s, emphasis: :strong, margin: { top: 8 })
+                else
+                  ui.text(key: "l#{index}", content: text.to_s, wrap: true)
+                end
+              end
+            end
+          end
+        end
       end
 
       # @return [App] editor operations bound to this character
       def app
         Runtime.app(
           data_dir: DATA_DIR, game: XMLData.game, character: Char.name,
+          char_settings: CharSettings.to_hash,
           templates: templates,
           rooms: Map.list, uid_resolver: ->(uid) { Map.ids_from_uid(uid) },
           # The creature finder opens on a band around the character's level.
