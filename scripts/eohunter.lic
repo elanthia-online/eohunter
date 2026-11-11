@@ -33,11 +33,26 @@
           game: Gemstone
           tags: hunting, combat, eo
       required: Lich >= 5.22.0
-       version: 0.5.1
+       version: 0.6.0
 
   Version Control:
-  Major_change.feature_addition.bugfix
-  v0.5.1 (2026-09-10)
+Major_change.feature_addition.bugfix
+v0.6.0 (2026-11-11)
+  - installs as a gem: download eohunter-<version>.gem from the GitHub
+    release, gem install it, then eohunter install (doctor, uninstall)
+  - ;eohunter setup, a hunt editor in Lich's WebUI built around picking a
+    creature; the hunts it saves are the ones the hunt runs, and
+    ;eohunter alone hunts the Default hunt
+  - the debug trace: ;eohunter debug, bigshot's debug mode from the event bus
+  - Cleanse takes its settings and recovery overrides from the hunt, aids a
+    stunned or poisoned groupmate, and finishes its trip before acting
+  - group: final_looter, followers ready their hands and check the group as
+    they set out, and the leader holds only for what stops movement
+  - engage: turbo modes, buffN acts as the buff runs out, a routine script
+    line is killed at its deadline; go2 failures are heard and not repeated
+  - opt-in strict group movement and safe-room hold over libeocoordination
+  - needs Lich 5.22.0 or later
+v0.5.1 (2026-09-10)
     - group liveness pulses between ticks (a blocking action no longer reads
       as a lost member or dead leader); a follower's hunting_scripts_stop no
       longer fogs; the group bounty rests on the verdict alone
