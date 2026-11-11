@@ -74,6 +74,7 @@ RSpec.describe EO::Engine::Travel::Trip do
     expect(result.reason).to eq(:could_not_reach)
     expect(trip.blocked_cause).to eq(:injured)
     expect(scripts.killed).to eq(['go2'])
+    expect(EO::Engine::Travel.active).to be_nil # released, so the next trip can claim
     expect(events.first[:reason]).to match(/far too much agony/)
   end
 
@@ -103,8 +104,34 @@ RSpec.describe EO::Engine::Travel::Trip do
 
     scripts.finish!('go2')
     fresh = described_class.new(300, scripts: scripts)
+    expect(fresh.tick(world)).to be_nil # starts go2; the block check runs from the next tick
     expect(fresh.tick(world)).to be_nil
     expect(fresh.done?).to be false
+  end
+
+  describe '.listen!' do
+    around do |example|
+      EO::Engine::Travel.instance_variable_set(:@listening, nil)
+      example.run
+      EO::Engine::Travel.instance_variable_set(:@listening, nil)
+    end
+
+    it "subscribes to go2's status once and files what arrives" do
+      handlers = []
+      bus = Module.new
+      bus.define_singleton_method(:on) { |topic, name:, &blk| handlers << [topic, name, blk] }
+      stub_const('Lich::Common::Events', bus)
+      expect(EO::Engine::Travel.listen!).to be true
+      expect(EO::Engine::Travel.listen!).to be false
+      expect(handlers.map { |t, n, _| [t, n] }).to eq([['go2.status', 'eohunter']])
+      handlers.first.last.call('go2.status', go2_status(phase: :blocked, cause: :injured))
+      expect(EO::Engine::Travel.blocked_status.cause).to eq(:injured)
+    end
+
+    it "subscribes to nothing on a Lich without the events bus" do
+      hide_const('Lich::Common::Events') if defined?(Lich::Common::Events)
+      expect(EO::Engine::Travel.listen!).to be false
+    end
   end
 
   it 'clears the blocked board when go2 reports progress again' do

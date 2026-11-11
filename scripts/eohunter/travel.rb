@@ -165,8 +165,9 @@ module EO::Engine
       end
 
       # Why go2 gave up, when it told us: a cause symbol from
-      # Lich::Common::Move (:injured, :encumbered, ...), else nil. Read it
-      # after a :could_not_reach to know whether walking again is futile.
+      # Lich::Common::Move (:injured, :encumbered, ...), else nil. Travel.step
+      # drops the trip on a :could_not_reach, so holders never see this; the
+      # cause reaches the trace through :travel_blocked.
       #
       # @return [Symbol, nil]
       attr_reader :blocked_cause
@@ -313,11 +314,9 @@ module EO::Engine
     # encumbered, including the profile's healing; Survival (0) owns the
     # room being dangerous. A Trip that heals would be a second copy of
     # both, so it does neither: it reports why and gets out of the way.
+    # Every other cause stays underway: go2 clears it on its own (a
+    # roundtime ends, a door opens, a muckle wears off).
     TERMINAL_CAUSES = %i[injured encumbered].freeze
-
-    # Causes go2 clears on its own: a roundtime ends, a door opens, a
-    # muckle wears off. Staying underway is right for these.
-    TRANSIENT_CAUSES = %i[roundtime closed muckled].freeze
 
     # The blocked status go2 last reported, or nil when it is walking.
     #
