@@ -149,16 +149,18 @@ module EO::Engine
         out
       end
 
-      # One line saying what is on.
+      # One line saying what is on. Off, the switches still show: `debug
+      # file` sets file and leaves the trace off, and a line saying only
+      # "debug off" read as though the word had done nothing.
       #
       # @param settings [Hash]
       # @return [String]
       def self.describe(settings)
         s = from(settings)
-        return 'debug off' unless s['on']
+        extras = SWITCHES.select { |k| s[k] }
+        return "debug off#{extras.empty? ? '' : " (#{extras.join(', ')} on)"}" unless s['on']
 
         cats = s['categories'].to_s == 'all' ? 'all' : categories(s).join(',')
-        extras = SWITCHES.select { |k| s[k] }
         "debug on: #{cats.empty? ? 'no categories' : cats}#{extras.empty? ? '' : " + #{extras.join(', ')}"}"
       end
     end

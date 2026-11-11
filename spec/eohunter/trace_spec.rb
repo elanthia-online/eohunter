@@ -61,6 +61,8 @@ RSpec.describe EO::Engine::Trace::Settings do
 
   it 'describes itself' do
     expect(described_class.describe(nil)).to eq('debug off')
+    expect(described_class.describe('file' => true)).to eq('debug off (file on)')
+    expect(described_class.describe('tick' => true, 'file' => true)).to eq('debug off (tick, file on)')
     expect(described_class.describe('on' => true)).to eq('debug on: all')
     expect(described_class.describe('on' => true, 'categories' => %w[combat group], 'tick' => true, 'file' => true))
       .to eq('debug on: combat,group + tick, file')
