@@ -525,6 +525,7 @@ module EOHunter
     engage_state = E::Engage::State.new
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
+    E::Travel.listen!
     travel = scripts && ->(room) { E::Travel::Trip.new(room, scripts: scripts) }
     loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy,
                                   wander_stance: wander_policy.wander_stance,
@@ -685,7 +686,10 @@ module EOHunter
     maintain_state = E::Maintain::State.new
     counters = E::Rest::Counters.new
     rest_policy = profile.rest_policy(wounded_binding: binding)
-    travel = scripts && ->(room) { E::Travel::Trip.new(room, scripts: scripts) }
+    E::Travel.listen!
+    # Not nil, as the leader's is: the default trip ends on a block, and a
+    # follower only logs one (go2_status) and keeps trying.
+    travel = ->(room) { E::Travel::Trip.new(room, scripts: scripts, end_on_block: false) }
     loot = E::Behaviors::Loot.new(policy: profile.loot_policy, targets_policy: targets_policy, rest_policy: rest_policy,
                                   wander_stance: wander_policy.wander_stance,
                                   counters: counters, follower: true, scripts: scripts)

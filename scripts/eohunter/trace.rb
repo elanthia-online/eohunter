@@ -29,7 +29,7 @@ module EO::Engine
       combat: %i[spell_refused engaged disengaged routine_action_started routine_action_resolved routine_unsupported
                  combat_blocked combat_blocked_departure incoming_swing ally_attacked force_roll
                  unarmed_followup unarmed_tier ammo_no_effect untargetable_learned],
-      movement: %i[travel_started travel_arrived travel_failed travel_suspended entered_room out_of_bounds
+      movement: %i[go2_status travel_blocked travel_started travel_arrived travel_failed travel_suspended entered_room out_of_bounds
                    fog_return tracked uncovered hidden_arrival],
       rest: %i[signs_held signs_wait_expired rest_started resting rested rest_finished rest_destination rest_retry rest_stuck rest_stranded
                rest_service_failed town_rest_complete final_loot_done final_loot_skipped overkill loot_script_started loot_stuck],
