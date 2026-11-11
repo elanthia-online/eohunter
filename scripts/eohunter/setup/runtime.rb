@@ -61,7 +61,6 @@ module EO
       # @param data_dir [String] Lich data directory
       # @param game [String] active game instance
       # @param character [String] active character name
-      # @param char_settings [Hash] read-only compatibility defaults
       # @param templates [Enumerable] native creature records
       # @param rooms [Enumerable] native map records
       # @param uid_resolver [#call] native UID lookup, without travel
@@ -72,7 +71,7 @@ module EO
       #   opening range
       # @param scripts [Array<String>, nil] installed script names, for the
       #   routine check; nil skips it
-      def app(data_dir:, game:, character:, char_settings:, templates:, rooms:, uid_resolver:, level: 0,
+      def app(data_dir:, game:, character:, templates:, rooms:, uid_resolver:, level: 0,
               ready_list: {}, inventory: [], armaments: {}, scripts: nil)
         root = File.join(data_dir, game, character)
         store = Store.new(root: File.join(root, 'eohunter'), legacy_root: File.join(root, 'bigshot_profiles'))
@@ -80,24 +79,10 @@ module EO
         room_list = rooms.to_a.compact
         room_index = room_list.to_h { |room| [room.id.to_i, room] }
         geography = Geography.new(templates: templates, rooms: room_list, uid_resolver: uid_resolver)
-        recovery_path = File.join(root, 'ecleanse.yaml')
-        recovery = EO::Engine::Cleanse::Policy.load(recovery_path, char_settings: char_settings)
-        # Resolving a hunt's *effective* recovery needs Profile#recovery_policy,
-        # which not every engine has. App treats a nil resolver as "cannot
-        # resolve" and simply omits the resolved policy, so offer one only when
-        # the installed engine can answer.
-        recovery_resolver = if EO::Engine::Profile.method_defined?(:recovery_policy)
-                              lambda do |raw|
-                                EO::Engine::Profile.new(raw, uid_ids: uid_resolver)
-                                                   .recovery_policy(path: recovery_path, char_settings: char_settings).to_h
-                              end
-                            end
         App.new(store: store, schema: schema, geography: geography,
                 context: { character: character, game: game, level: level },
-                recovery_fallback: recovery.to_h,
                 uid_ids: uid_resolver, room_lookup: ->(id) { room_index[id.to_i] },
                 hazards: Hazards.new(profile_class: EO::Engine::Profile),
-                recovery_resolver: recovery_resolver,
                 society_abilities: SocietyAbilities.capture,
                 ready_list: ready_list, inventory: inventory, armaments: armaments, scripts: scripts)
       end

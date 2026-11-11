@@ -10,27 +10,23 @@ module EO
       # @param schema [Schema] metadata and native profile validation
       # @param geography [Geography, nil] optional native map facts
       # @param context [Hash] character/game identity bound at editor startup
-      # @param recovery_fallback [Hash] snapshot of read-only legacy recovery
       # @param uid_ids [#call, nil] native read-only UID resolver
       # @param room_lookup [#call, nil] native map lookup by room ID
       # @param hazards [Hazards, nil] optional advisory coverage
-      # @param recovery_resolver [#call, nil] native effective recovery policy
       # @param map_images [MapImages, nil] allowlisted installed raster maps
       # @param society_abilities [Hash] read-only native ability snapshot
       # @param ready_list [Hash] ReadyList slots and what is readied in them
       # @param inventory [Array<Hash>] carried items as {noun:, name:, types:}
       # @param scripts [Array<String>, nil] installed script names, for the
       #   routine check
-      def initialize(store:, schema:, geography: nil, context: {}, recovery_fallback: {}, uid_ids: nil, room_lookup: nil, hazards: nil, recovery_resolver: nil, map_images: nil, society_abilities: {}, ready_list: {}, inventory: [], armaments: {}, scripts: nil)
+      def initialize(store:, schema:, geography: nil, context: {}, uid_ids: nil, room_lookup: nil, hazards: nil, map_images: nil, society_abilities: {}, ready_list: {}, inventory: [], armaments: {}, scripts: nil)
         @store = store
         @schema = schema
         @geography = geography
         @context = context.freeze
-        @recovery_fallback = recovery_fallback.transform_keys(&:to_s)
         @uid_ids = uid_ids
         @room_lookup = room_lookup
         @hazards = hazards
-        @recovery_resolver = recovery_resolver
         @map_images = map_images
         @society_abilities = society_abilities
         @ready_list = ready_list
@@ -128,7 +124,6 @@ module EO
           injury_policies: @store.list('injury_policies'), character_preferences: @store.character_preferences,
           legacy_profiles: legacy_profiles,
           profile_visibility: @store.profile_visibility,
-          recovery_fallback: @recovery_fallback,
           capabilities: @schema.capabilities,
           routine_maneuvers: @schema.routine_maneuvers,
           boon_abilities: @schema.boon_abilities,
@@ -175,8 +170,6 @@ module EO
           warnings: warnings, valid: checked[:valid], ready: checked[:ready] && missing.empty?,
           effective: result.raw, provenance: result.provenance, revisions: result.revisions,
           hazard_coverage: advisory && advisory['coverage'],
-          recovery_fallback: @recovery_fallback,
-          effective_recovery: kind == 'profiles' && checked[:valid] && @recovery_resolver ? @recovery_resolver.call(result.raw) : nil,
           note: 'Configuration validation does not prove combat effectiveness or area safety.'
         }
       end

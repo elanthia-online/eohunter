@@ -106,7 +106,7 @@ RSpec.describe EO::HunterSetup::Page do
   let(:app) do
     EO::HunterSetup::Runtime.app(
       data_dir: @directory, game: 'GSIV', character: 'Example',
-      char_settings: {}, templates: [], rooms: [], uid_resolver: ->(_uid) { [] },
+      templates: [], rooms: [], uid_resolver: ->(_uid) { [] },
       inventory: [{ noun: 'falchion', name: 'a steel falchion', types: nil }],
       armaments: { weapons: %w[falchion], shields: [] }
     )
@@ -174,7 +174,7 @@ RSpec.describe EO::HunterSetup::Page do
 
     let(:app) do
       EO::HunterSetup::Runtime.app(
-        data_dir: @directory, game: 'GSIV', character: 'Example', char_settings: {}, level: 20,
+        data_dir: @directory, game: 'GSIV', character: 'Example', level: 20,
         templates: [template_class.new(name: 'kobold', level: 1, family: 'kobold', type: 'biped', areas: [{ name: 'Kobold Warren', uids: [1] }]),
                     template_class.new(name: 'rolton', level: 18, family: 'rolton', type: 'quadruped', areas: [{ name: 'Upper Trollfang', uids: [2] }]),
                     template_class.new(name: 'troll', level: 22, family: 'troll', type: 'biped',

@@ -379,7 +379,7 @@ module EO
           'key' => 'recovery', 'type' => 'structured', 'cleaner' => 'structured', 'default' => {},
           'label' => 'Integrated recovery preferences', 'page' => 'recovery', 'editor' => 'raw', 'units' => nil,
           'scope' => 'hunt or inherited character default', 'aliases' => %w[recovery ecleanse cleanse dispel poison disease disarm],
-          'help' => 'Hunter-owned overrides for integrated Cleanse. Missing keys inherit read-only ecleanse preferences; explicit false disables a preference. Saving does not change standalone ecleanse.',
+          'help' => 'What Cleanse does on this hunt, with ecleanse\'s own names: a preference left out is off. ecleanse.yaml is not read or changed.',
           'keys' => @cleanse_policy_class ? @cleanse_policy_class.members.map(&:to_s) : []
         }
       end

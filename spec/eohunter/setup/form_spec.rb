@@ -16,7 +16,7 @@ RSpec.describe EO::HunterSetup::Form do
   let(:app) do
     EO::HunterSetup::Runtime.app(
       data_dir: @directory, game: 'GSIV', character: 'Example',
-      char_settings: {}, templates: [], rooms: [], uid_resolver: ->(_uid) { [] },
+      templates: [], rooms: [], uid_resolver: ->(_uid) { [] },
       inventory: [{ noun: 'falchion', name: 'a steel falchion', types: nil }],
       armaments: { weapons: %w[falchion], shields: [] }
     )

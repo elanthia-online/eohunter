@@ -19,7 +19,7 @@ RSpec.describe EO::HunterSetup::Editor do
   let(:app) do
     EO::HunterSetup::Runtime.app(
       data_dir: @directory, game: 'GSIV', character: 'Example',
-      char_settings: {}, templates: [], rooms: [], uid_resolver: ->(_uid) { [] }
+      templates: [], rooms: [], uid_resolver: ->(_uid) { [] }
     )
   end
   let(:editor) { described_class.new(app: app) }

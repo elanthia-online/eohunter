@@ -119,7 +119,6 @@ module EO
       def app
         Runtime.app(
           data_dir: DATA_DIR, game: XMLData.game, character: Char.name,
-          char_settings: CharSettings.to_hash,
           templates: templates,
           rooms: Map.list, uid_resolver: ->(uid) { Map.ids_from_uid(uid) },
           # The creature finder opens on a band around the character's level.

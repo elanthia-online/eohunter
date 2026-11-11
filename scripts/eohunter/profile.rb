@@ -143,20 +143,14 @@ module EO::Engine
     # @return [Hash{Symbol => Object}]
     attr_reader :recovery
 
-    # Cleanse's policy for this hunt: ecleanse.yaml (else the CharSettings
-    # toggles), then the profile's troubadours_rally, then the hunt's own
-    # `recovery` overrides, which win. A key the hunt leaves out inherits;
-    # an explicit false turns a preference off for this hunt only.
-    # ecleanse.yaml itself is never written.
+    # Cleanse's policy for this hunt, from the hunt alone: its `recovery`
+    # mapping over the profile's troubadours_rally and stand_stance. A
+    # preference the hunt leaves out is off. Nothing is read from
+    # ecleanse.yaml.
     #
-    # @param path [String] the character's ecleanse.yaml
-    # @param char_settings [Hash{String => Object}] the CharSettings fallbacks
     # @return [Cleanse::Policy]
-    def recovery_policy(path:, char_settings: {})
-      base = Cleanse::Policy.load(path, char_settings: char_settings).to_h
-      base[:troubadours_rally] = self['troubadours_rally']
-      base[:stand_stance] = self['stand_stance']
-      Cleanse::Policy.new(**base.merge(recovery))
+    def recovery_policy
+      Cleanse::Policy.new(troubadours_rally: self['troubadours_rally'], stand_stance: self['stand_stance'], **recovery)
     end
 
     # Refuse unsupported coordination before group registration or game actions.

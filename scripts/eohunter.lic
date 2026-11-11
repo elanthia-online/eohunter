@@ -21,7 +21,7 @@
                                            all, <category> [on|off], tick, feed, file, help, status
 
   Behaviors by priority: Survival 0, Cleanse 5 (ecleanse folded in; its
-  settings from ecleanse.yaml), Flee 10, Muster 15 (the leader's holds),
+  settings from the hunt), Flee 10, Muster 15 (the leader's holds),
   Rest 20 (a follower's Orders), Loot 30, Loadout 35, Maintain 40, Engage 50 (a
   follower's Assist), Wander 60 (a follower's Follow). One action per
   tick; the most urgent behavior that wants control gets the tick.
@@ -534,9 +534,9 @@ module EOHunter
     # Rest drives Loot for the final loot before leaving (should_rest? 9041)
     rest = E::Behaviors::Rest.new(policy: rest_policy, counters: counters, loot: loot, group: leader,
                                   scripts: scripts, travel: travel, buffs: buffs)
-    cleanse_policy = profile.recovery_policy(path: File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'),
-                                             char_settings: CharSettings.to_hash)
+    cleanse_policy = profile.recovery_policy
     aid = leader && profile['group_aid'] ? E::Cleanse::Aid::Link.new(name: Char.name, source: -> { leader.aid_roster }) : nil
+    msg('info', 'Cleanse has nothing turned on for this hunt; set it on the Recovery page of ;eohunter setup.') if profile.recovery.empty? && !profile['troubadours_rally'] && aid.nil?
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy, travel: travel, aid: aid)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { rest.resting? })
     flee_policy = profile.flee_policy
@@ -700,9 +700,9 @@ module EOHunter
                                       sneaky: wander_policy.sneaky, scripts: scripts, travel: travel)
     loadout = E::Behaviors::Loadout.new(policy: profile.loadout_policy, selection: profile.loadout_selection,
                                         owner: assist, resting: -> { orders.resting? })
-    cleanse_policy = profile.recovery_policy(path: File.join(DATA_DIR, XMLData.game, Char.name, 'ecleanse.yaml'),
-                                             char_settings: CharSettings.to_hash)
+    cleanse_policy = profile.recovery_policy
     aid = profile['group_aid'] ? E::Cleanse::Aid::Link.new(name: Char.name, source: -> { member.aid_roster }) : nil
+    msg('info', 'Cleanse has nothing turned on for this hunt; set it on the Recovery page of ;eohunter setup.') if profile.recovery.empty? && !profile['troubadours_rally'] && aid.nil?
     cleanse = E::Behaviors::Cleanse.new(policy: cleanse_policy, travel: travel, aid: aid)
     survival = E::Behaviors::Survival.new(policy: profile.survival_policy, resting: -> { orders.resting? }, follower: true)
     flee = E::Behaviors::Flee.new(policy: profile.flee_policy, targets_policy: targets_policy, walker: walker,

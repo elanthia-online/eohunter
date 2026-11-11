@@ -14,9 +14,8 @@ you from nothing to a dry run and then a first hunt.
   or by hand, which eohunter reads unchanged; or a hunt made with
   `;eohunter setup` (below). See [Profiles](profiles.md) for every key it
   honours.
-- For Cleanse, an `ecleanse.yaml` in the same character directory,
-  written by ecleanse's setup window. Without one, Cleanse runs with
-  every toggle off.
+- For Cleanse, settings in the hunt, on the Recovery page of
+  `;eohunter setup`. Without them, Cleanse runs with every toggle off.
 
 ## Installing
 

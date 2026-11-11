@@ -54,8 +54,9 @@ script refuses to start and says to update.
 `;eohunter setup` opens a hunt editor in Lich's WebUI: open one, import a Bigshot
 profile, change its settings, validate it against the installed engine,
 and save it as an eohunter hunt. It never writes to a Bigshot profile.
-Cleanse reads `data/<game>/<char>/ecleanse.yaml`, which ecleanse's own
-setup window writes. A profile's `troubadours_rally`, `signs` entries such as
+Cleanse takes its settings from the hunt's `recovery` mapping, on the
+Recovery page of `;eohunter setup`; it does not read `ecleanse.yaml`. A
+profile's `troubadours_rally`, `signs` entries such as
 `650 panther evoke`, and `quick_commands` (used by bandit mode) all work
 as they do in bigshot.
 

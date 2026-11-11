@@ -16,7 +16,7 @@
 # list, the Watch carries the line rules, and taking the tick IS the
 # pause. Each ecleanse Action is an engine Action with the same gates and
 # the same commands, bounded where ecleanse loops. Settings come from
-# ecleanse.yaml (its setup window stays where it is). Rules and ecleanse
+# the hunt's `recovery` mapping, set in ;eohunter setup. Rules and ecleanse
 # line references in hunting-engine-plan.md, "Cleanse".
 #
 module EO::Engine
@@ -24,7 +24,7 @@ module EO::Engine
   # spell lookups and the Predicates that pick a job each tick. The
   # actions and the priority-5 behavior sit under Actions and Behaviors.
   module Cleanse
-    # Every ecleanse.yaml toggle the Policy carries (ecleanse).
+    # Every Cleanse preference the Policy carries (ecleanse's own names).
     KEYS = %i[
       cleanse_magical cleanse_grounded cleanse_poison cleanse_disease recover_disarmed
       dispel_magic avoid_webs use_berserk_webbed hive_traps_apparatus hive_traps_ground
@@ -34,30 +34,14 @@ module EO::Engine
       troubadours_rally stand_stance
     ].freeze
 
-    # The ecleanse.yaml toggles, one member per KEYS entry: every toggle
-    # false and safe_room "" unless the profile says otherwise.
+    # The preferences, one member per KEYS entry: every toggle false and
+    # safe_room "" unless the hunt says otherwise.
     Policy = Struct.new(*KEYS, keyword_init: true) do
       # @param opts [Hash{Symbol => Object}] KEYS values; keys outside
       #   KEYS are dropped
       def initialize(**opts)
         defaults = KEYS.to_h { |k| [k, k == :safe_room ? '' : false] }
         super(**defaults.merge(opts.slice(*KEYS)))
-      end
-
-      # ecleanse load_profile: data/<game>/<char>/ecleanse.yaml, else
-      # the CharSettings defaults.
-      #
-      # @param path [String] the ecleanse.yaml
-      # @param char_settings [Hash{String => Object}] the CharSettings
-      #   fallbacks for the eight legacy toggles
-      # @return [Policy]
-      def self.load(path, char_settings: {})
-        require 'yaml'
-        raw = File.exist?(path) ? (YAML.safe_load_file(path, permitted_classes: [Symbol]) || {}) : {}
-        raw = raw.to_h { |k, v| [k.to_sym, v] }
-        defaults = %w[cleanse_magical cleanse_grounded cleanse_poison cleanse_disease recover_disarmed avoid_webs break_runestone determination]
-                   .to_h { |k| [k.to_sym, char_settings[k] || false] }
-        new(**defaults.merge(raw))
       end
     end
 

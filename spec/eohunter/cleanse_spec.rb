@@ -23,25 +23,6 @@ RSpec.describe EO::Engine::Actions::CleanseGrounded do
   end
 end
 
-RSpec.describe EO::Engine::Cleanse::Policy do
-  it 'reads ecleanse.yaml and falls back to CharSettings defaults' do
-    require 'tmpdir'
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, 'ecleanse.yaml')
-      File.write(path, ":cleanse_poison: true\n:use_213: true\n:safe_room: '1234'\n")
-      p = described_class.load(path, char_settings: { 'cleanse_disease' => true })
-      expect(p.cleanse_poison).to be true
-      expect(p.cleanse_disease).to be true
-      expect(p.use_213).to be true
-      expect(p.safe_room).to eq('1234')
-      expect(p.use_flee).to be false
-      missing = described_class.load(File.join(dir, 'nope.yaml'), char_settings: { 'avoid_webs' => true })
-      expect(missing.avoid_webs).to be true
-      expect(missing.cleanse_poison).to be false
-    end
-  end
-end
-
 RSpec.describe EO::Engine::Cleanse::Casting do
   let(:me) { OpenStruct.new(able_to_cast?: true) }
   let(:spells) { {} }
