@@ -16,7 +16,9 @@ Gem::Specification.new do |spec|
   spec.metadata = {
     'source_code_uri'       => spec.homepage,
     'documentation_uri'     => 'https://elanthia-online.github.io/eohunter/',
-    'rubygems_mfa_required' => 'true'
+    'rubygems_mfa_required' => 'true',
+    # Lich's lich5-update loads this file and calls EOHunter::Install.install(lich_dir)
+    'lich_install'          => 'eohunter/install#EOHunter::Install'
   }
   # The installer is plain Ruby; any current Ruby runs it, not only Lich's.
   spec.required_ruby_version = '>= 3.0' # rubocop:disable Gemspec/RequiredRubyVersion
