@@ -33,10 +33,18 @@
           game: Gemstone
           tags: hunting, combat, eo
       required: Lich >= 5.22.0
-       version: 0.6.0
+       version: 0.7.0
 
   Version Control:
 Major_change.feature_addition.bugfix
+v0.7.0 (2026-11-11)
+  - Ranger tracking as a hunt setting: track and track_creature, shown on
+    What to hunt to Rangers only; track <creature> on the command line still
+    wins for that run
+  - a creature living in separate areas: one set of ticks, each area lists
+    what lives there, and Start in this area opens its map to pick the start
+  - the gem names its installer entry point, so lich5-update can install it
+    from inside Lich
 v0.6.0 (2026-11-11)
   - installs as a gem: download eohunter-<version>.gem from the GitHub
     release, gem install it, then eohunter install (doctor, uninstall)
