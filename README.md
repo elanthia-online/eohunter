@@ -29,7 +29,8 @@ Profiles and settings under `data/` are never touched.
 ## Running it
 
 ```
-;eohunter <profile>                    hunt with data/<game>/<char>/bigshot_profiles/<profile>.yaml
+;eohunter                              hunt with the Default hunt, ticked on the Hunts page of ;eohunter setup
+;eohunter <profile>                    hunt with the hunt ;eohunter setup saved, else bigshot_profiles/<profile>.yaml
 ;eohunter <profile> dry                load the profile, report the policies, do not run
 ;eohunter <profile> bandits            hunt bandits (also on in bounty mode when the bounty says so)
 ;eohunter <profile> track <creature>   Rangers: TRACK toward the creature before each step
@@ -51,9 +52,13 @@ Mana.pulse, #1581 Bank, #1583 the PSM readers, #1584 Fog, #1585 the spell
 refresh, #1586 Combat::Messages, #1587 bounded fput). On an older Lich the
 script refuses to start and says to update.
 
-`;eohunter setup` opens a hunt editor in Lich's WebUI: open one, import a Bigshot
-profile, change its settings, validate it against the installed engine,
-and save it as an eohunter hunt. It never writes to a Bigshot profile.
+`;eohunter setup` opens a hunt editor in Lich's WebUI. Open a saved hunt,
+import a Bigshot profile as an unsaved copy, or start a new one; pick the
+creatures and where to hunt them; change the rest, recovery, combat and
+gear settings page by page; Validate against the installed engine; and
+Save it as an eohunter hunt under `data/<game>/<char>/eohunter/profiles/`.
+A saved hunt wins over a Bigshot profile of the same name, and it never
+writes to a Bigshot profile.
 Cleanse takes its settings from the hunt's `recovery` mapping, on the
 Recovery page of `;eohunter setup`, where Import from ecleanse copies
 ecleanse's settings in once; hunting never reads `ecleanse.yaml`. A
@@ -131,10 +136,22 @@ The controller requires Lich's execution guards and exact child lifecycle in
 addition to the normal Hunter dependencies. The rebased implementation is
 verified offline; renewed live acceptance against this combination is pending.
 
-Optional cross-process mechanics live in the on-demand
-[`libeocoordination`](docs/guides/coordination-library.md) script library rather
-than Lich core. Lich owns parser-coherent facts and script execution; the
-library owns bounded transport, discovery, operation delivery, and receipts.
+## The coordination library
+
+`libeocoordination.lic` and `scripts/eocoordination/` are a separate script
+library, installed alongside eohunter. It lets independent Lich sessions on
+one machine share read-only snapshots of each character's state and send
+each other acknowledged requests, without moving them into one Ruby
+process. Loading it starts nothing; the script using it owns every session
+and decides what to do with what it hears. eohunter uses it only for
+[strict group movement](docs/guides/strict-group-movement.md) and the
+safe-room hold.
+
+It is kept apart from `scripts/eohunter/` so another multi-character script
+can use it without eohunter, and it has its own version (checked with
+`EO::Coordination.require_version`). The library file sits at the top of
+`scripts/` because that is where `Script.loadlib` looks. See
+[the coordination library](docs/guides/coordination-library.md).
 
 ## How it works
 
@@ -237,7 +254,7 @@ bundle exec rake doc:stats    # coverage, listing what is undocumented
 ```
 
 `.yardopts` names the sources: the script, the engine parts, the
-builder, the guides below and the three documents under `docs/` as
+coordination library, the guides below and the three documents under `docs/` as
 extra pages. `doc/` and `.yardoc/` are not committed. A `@bigshot` tag
 on a method or class names the bigshot rule it came from, with the
 line reference.
@@ -253,6 +270,8 @@ line reference.
 - [Troubleshooting](docs/guides/troubleshooting.md): the lines, the stops, common causes, what to report
 - [Contributing](docs/guides/contributing.md): the flow, the conventions, review
 - [Core dependencies](docs/guides/core-dependencies.md): what the engine uses from Lich, and the lich-5 PRs it came from
+- [Strict group movement](docs/guides/strict-group-movement.md): the opt-in group movement over the coordination library
+- [The coordination library](docs/guides/coordination-library.md): `libeocoordination`, its pieces and how a script uses it
 
 ## Building the gem
 
@@ -274,5 +293,7 @@ outside the table is sent bare, as bigshot sends it.
 Solo on a Ranger profile, 2026-09-10: the routine language, hides and
 fires, coup de grace with its health and Empowered gates, Assume Aspect
 from the signs box, rests to the resting room and back, and the go2
-supervision. Bandit mode, Ranger tracking and group hunting have not had
-a live run yet.
+supervision.
+
+Group hunting, head and tail, has since been run live and works. Bandit
+mode and Ranger tracking have not had a live run yet.
