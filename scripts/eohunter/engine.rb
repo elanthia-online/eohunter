@@ -32,7 +32,7 @@ module ::EO
   # eohunter's engine namespace; see the file header for the parts.
   module Engine
     # The engine's release version, reported by `EO::Engine.version`.
-    VERSION = '0.6.0'.freeze
+    VERSION = '0.7.0'.freeze
     # The DownstreamHook name Watch.install! registers its line hook under.
     HOOK_NAME = 'eohunter::watch'
 
