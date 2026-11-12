@@ -249,20 +249,21 @@ module EO
       # separate pockets gets three rings, one boundary list.
       # @param name [String] the creature as the templates name it
       # @return [Hash] room_ids, boundary_ids, pockets (how many separate
-      #   groups of rooms), areas (those groups' room ids) and sheets (as
+      #   groups of rooms), areas (those groups' room ids), views (each
+      #   area's sheet and a room on it, as #area_view) and sheets (as
       #   #creature_sheets)
       def creature_fence(name)
         wanted = name.to_s
         templates = @templates.select { |t| t.name.to_s.casecmp?(wanted) }
         uids = templates.flat_map { |t| Array(t.areas).flat_map { |area| area_uids(area) } }.uniq
         ids = resolve_uids(uids)[:room_ids]
-        return { room_ids: [], boundary_ids: [], pockets: 0, areas: [], sheets: [] } if ids.empty?
+        return { room_ids: [], boundary_ids: [], pockets: 0, areas: [], views: [], sheets: [] } if ids.empty?
 
         # The separate groups of its rooms, largest first: a hunt starts in
         # one and walks only that one.
         areas = components(ids, footprint_graph(ids)[:edges]).sort_by { |area| [-area.size, area.first] }
         { room_ids: ids, boundary_ids: hunt_boundaries(ids, ids), pockets: areas.size, areas: areas,
-          sheets: maps_for_uids(uids) }
+          views: areas.map { |area| area_view(area) }, sheets: maps_for_uids(uids) }
       end
 
       # A creature's details for the popup: Creatures.details, then each
@@ -544,6 +545,22 @@ module EO
           name = entry.is_a?(Hash) ? (entry[:id] || entry['id']) : entry
           name.to_s unless name.to_s.empty?
         end.uniq
+      end
+
+      # The sheet most of an area's rooms are drawn on, and one of its rooms
+      # on that sheet to bring into view, so the area can be shown by itself.
+      # @param ids [Array<Integer>] the area's room ids
+      # @return [Hash] sheet, sheet_label and anchor; all nil when none of
+      #   its rooms is drawn
+      def area_view(ids)
+        drawn = ids.filter_map do |id|
+          room = @rooms[id]
+          room if room.respond_to?(:image) && !room.image.to_s.empty?
+        end
+        return { sheet: nil, sheet_label: nil, anchor: nil } if drawn.empty?
+
+        sheet, rooms = drawn.group_by(&:image).max_by { |image, on| [on.size, image] }
+        { sheet: sheet, sheet_label: @map_labels.fetch(sheet, sheet), anchor: rooms.first.id }
       end
 
       def maps_for_uids(uids)

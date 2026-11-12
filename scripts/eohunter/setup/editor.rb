@@ -1008,6 +1008,42 @@ module EO
       # @return [Array<Array<Integer>>]
       def fence_areas = fence_part(:areas) || []
 
+      # Each area's sheet and a room on it, in fence_areas' order.
+      # @return [Array<Hash>] sheet, sheet_label, anchor
+      def fence_views = fence_part(:views) || []
+
+      # The fence's areas as choices for where the hunt starts, when there
+      # is more than one: which area, how big, and the sheet it is on.
+      # @return [Array<Hash>] index and label
+      def area_choices
+        areas = fence_areas
+        return [] if areas.size < 2
+
+        areas.each_with_index.map do |rooms, index|
+          sheet = fence_views[index]&.dig(:sheet_label)
+          { index: index, label: "Area #{index + 1}, #{rooms.size} room#{'s' if rooms.size != 1}#{": #{sheet}" if sheet}" }
+        end
+      end
+
+      # Start the hunt in one of the fence's areas: Where to hunt, that
+      # area's sheet with one of its rooms in view, and a left-click
+      # setting the start room. The start room is what picks the area; the
+      # creatures to hunt are names and apply in whichever it is.
+      # @param index [Integer] the area, as in fence_areas
+      # @return [Boolean] whether to re-render
+      def on_start_in_area(index)
+        index = index.to_i
+        view = fence_views[index]
+        return note('That area is not part of this hunt.', error: true) unless fence_areas[index] && view
+        return note("Area #{index + 1} has no rooms on an installed map.", error: true) if view[:sheet].to_s.empty?
+
+        @assign_role = 'hunting_room_id'
+        @map_open = true
+        @map_anchor = view[:anchor]
+        on_show_page('area')
+        show_sheet(view[:sheet], "Area #{index + 1}: left-click the room the hunt starts in.")
+      end
+
       # The creature the fence was made for, for this draft.
       # @return [String, nil]
       def fence_creature = fence_part(:creature)
@@ -1253,7 +1289,7 @@ module EO
         before = list_entries('targets')
         targets = moved ? [wanted] : (before + [wanted]).uniq { |entry| entry.split('(').first.strip.downcase }
         write_list('targets', targets)
-        @fence = { serial: draft_serial, rooms: rooms, areas: Array(fence[:areas]), creature: wanted }
+        @fence = { serial: draft_serial, rooms: rooms, areas: Array(fence[:areas]), views: Array(fence[:views]), creature: wanted }
         # Open from here on, though the hunt now has a target: the viewer is
         # still choosing.
         @creature_search_open = true
@@ -1266,8 +1302,9 @@ module EO
         @map = nil
         @map_frame = nil
         sheets = Array(fence[:sheets])
-        if sheets.size == 1
-          @sheet = sheets.first[:id].to_s
+        if sheets.size == 1 || Array(fence[:areas]).size > 1
+          # Several areas are chosen by area, through #area_choices.
+          @sheet = sheets.size == 1 ? sheets.first[:id].to_s : nil
           @sheet_choices = []
         else
           @sheet = nil

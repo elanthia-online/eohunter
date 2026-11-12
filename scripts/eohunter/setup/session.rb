@@ -83,6 +83,7 @@ module EO
         when :request_delete then delete(args[0])
         when :toggle_map then apply(editor.on_toggle_map)
         when :show_page then show_page(args[0])
+        when :start_in_area then start_in_area(args.empty? ? value : args[0])
         when :toggle_fold then apply(editor.on_toggle_fold(args[0]))
         when :recovery_set then apply(editor.on_recovery_set(args[0], value))
         when :import_ecleanse then apply(editor.on_import_ecleanse)
@@ -147,6 +148,15 @@ module EO
         moved = editor.on_show_page(id)
         @set_view.call(editor.tabs_cid, :selected, editor.page_index) if moved && editor.tabs_cid
         apply(moved)
+      end
+
+      # Where to hunt, on one of the fence's areas, with its tab selected.
+      def start_in_area(index)
+        return if index.to_s.empty?
+
+        changed = editor.on_start_in_area(index.to_i)
+        @set_view.call(editor.tabs_cid, :selected, editor.page_index) if editor.tabs_cid
+        apply(changed)
       end
 
       def guarded(what, &change)

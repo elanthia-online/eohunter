@@ -943,9 +943,11 @@ RSpec.describe EO::HunterSetup::Page do
       expect(editor.sheet).to eq('far.png')
     end
 
-    it 'lists a fence of several areas apart, starts only where the creature lives, and outlines its rooms' do
+    it 'lists a fence of several areas apart, starts in the one chosen, only where the creature lives, and outlines its rooms' do
       catalogue = [{ name: 'kelpie', level: 112, family: 'equine', type: 'quadruped', otherclass: [], areas: ['Grief'], traits: {} }]
-      fence = { room_ids: [1, 2, 7], boundary_ids: [3], pockets: 2, areas: [[1, 2], [7]], sheets: [{ id: 'town.png', name: 'Town' }] }
+      fence = { room_ids: [1, 2, 7], boundary_ids: [3], pockets: 2, areas: [[1, 2], [7]],
+                views: [{ sheet: 'town.png', sheet_label: 'Town', anchor: 1 }, { sheet: 'far.png', sheet_label: 'Far', anchor: 7 }],
+                sheets: [{ id: 'far.png', name: 'Far' }, { id: 'town.png', name: 'Town' }] }
       app = editor.instance_variable_get(:@app)
       allow(app).to receive(:call).and_wrap_original do |original, request|
         case request['action']
@@ -964,12 +966,25 @@ RSpec.describe EO::HunterSetup::Page do
       editor.on_show_page('creatures')
       builder = render
       headings = nodes(builder, :text).select { |node| node.props[:key].to_s.match?(/\Aarea-\d+-heading\z/) }.map { |node| node.props[:content] }
-      expect(headings).to eq(['Area 1, 2 rooms', 'Area 2, 1 room'])
-      # Each area's own Hunt all takes only that area's creatures.
-      area_two = nodes(builder, :button).find { |node| node.props[:key] == 'hunt-all' && node.cid.include?('area-1') }
+      expect(headings).to eq(['Area 1, 2 rooms: Town', 'Area 2, 1 room: Far'])
+      # One tick per creature, since a tick is a name in whichever area the
+      # hunt walks; each area says what lives there.
+      ticks = nodes(builder, :checkbox).map { |node| node.props[:label] }
+      expect(ticks.tally.values.uniq).to eq([1])
+      lives = nodes(builder, :text).find { |node| node.props[:key] == 'area-1-lives' }
+      expect(lives.props[:content]).to eq('whelk, kelpie')
+      # Starting in area 2 opens Where to hunt on its own sheet, a click
+      # setting the start room.
+      area_two = nodes(builder, :button).find { |node| node.props[:key] == 'start' && node.cid.include?('area-1') }
       area_two.on[:activate].call(FakeEvent.new({}))
-      expect(editor.list_entries('targets')).to eq(%w[kelpie whelk])
-      expect(editor.list_entries('targets')).not_to include('shark')
+      expect(editor.sheet).to eq('far.png')
+      expect(editor.assign_role).to eq('hunting_room_id')
+      expect(EO::HunterSetup::Editor::NAV_ITEMS[editor.page_index][:id]).to eq('area')
+      # Where to hunt offers the same choice by area, named with its sheet.
+      offered = nodes(render, :select).find { |node| node.props[:key] == 'found-areas' }
+      expect(offered.props[:options].map { |option| option[:label] }).to eq(['pick one', 'Area 1, 2 rooms: Town', 'Area 2, 1 room: Far'])
+      offered.on[:change].call(FakeEvent.new({ value: '0' }))
+      expect(editor.sheet).to eq('town.png')
       # On the map, the creature's rooms are outlined, and a start outside them is refused.
       editor.on_show_page('area')
       editor.on_toggle_map unless editor.map_open?

@@ -711,19 +711,26 @@ module EO
                       ' Choosing the start room narrows this to the rooms the hunt walks.'
                     else
                       " #{editor.fence_creature} lives in #{areas.size} separate areas, and a hunt walks one: " \
-                        'the one its start room is in. Hunt the creatures of that area.'
+                        'the one its start room is in. The creatures ticked are hunted in whichever that is.'
                     end
           end
           ui.text(key: 'hint', emphasis: :subtle, content: hint)
-          if areas.empty?
-            Page.creature_ticks(ui, editor, creatures, session, key: 'all')
-          else
-            areas.each_with_index do |area, index|
-              ui.text(key: "area-#{index}-heading", content: "Area #{index + 1}, #{area[:rooms].size} room#{'s' if area[:rooms].size != 1}", emphasis: :strong)
-              Page.creature_ticks(ui, editor, area[:creatures], session, key: "area-#{index}")
+          Page.creature_ticks(ui, editor, creatures, session, key: 'all')
+          # A tick is a name, not a name in an area, so the areas are told
+          # apart by what lives in each and chosen by where the hunt starts.
+          choices = editor.area_choices
+          areas.each_with_index do |area, index|
+            ui.text(key: "area-#{index}-heading", content: choices[index]&.dig(:label).to_s, emphasis: :strong)
+            ui.text(key: "area-#{index}-lives", emphasis: :subtle,
+                    content: area[:creatures].map { |creature| creature[:name].to_s }.join(', '))
+            ui.columns(key: "area-#{index}-start", count: 1, weights: [0], compact: true) do
+              ui.button(slot: '0', key: 'start', label: 'Start in this area',
+                        tooltip: 'Where to hunt, on this area\'s map, to left-click the room the hunt starts in.',
+                        on: { activate: Page.on(session, :start_in_area, index) })
             end
           end
-          unless walked
+          # With several areas each has its own way there, above.
+          if !walked && areas.empty?
             ui.columns(key: 'here-next', count: 1, weights: [0], compact: true) do
               ui.button(slot: '0', key: 'next', label: 'Next: choose the start room', variant: :primary,
                         tooltip: 'Where to hunt, with the map on the fence and a left-click setting the start room.',
@@ -1098,7 +1105,15 @@ module EO
                              'The sheet it is on comes up with that room in view.',
                     on: { change: Page.on(session, :find_room) })
           choices = editor.sheet_choices
-          if matches.empty? && choices.size > 1
+          areas = editor.area_choices
+          if matches.empty? && !areas.empty?
+            # A found creature living in separate areas: which one the hunt
+            # starts in, each named with its sheet.
+            ui.select(slot: '1', key: 'found-areas', label: "#{areas.size} areas",
+                      options: [{ value: '', label: 'pick one' }] + areas.map { |area| { value: area[:index].to_s, label: area[:label] } },
+                      value: '', tooltip: "The separate areas #{editor.fence_creature} lives in. Pick one to show it and click its start room.",
+                      on: { change: Page.on(session, :start_in_area) })
+          elsif matches.empty? && choices.size > 1
             # A found creature living on several sheets: which to show.
             ui.select(slot: '1', key: 'found-sheets', label: "#{choices.size} sheets",
                       options: [{ value: '', label: 'pick one' }] + choices.map { |sheet| { value: sheet[:id].to_s, label: sheet[:name].to_s } },
