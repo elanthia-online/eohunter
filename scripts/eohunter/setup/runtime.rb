@@ -75,7 +75,7 @@ module EO
       #   opening range
       # @param scripts [Array<String>, nil] installed script names, for the
       #   routine check; nil skips it
-      def app(data_dir:, game:, character:, char_settings:, templates:, rooms:, uid_resolver:, level: 0,
+      def app(data_dir:, game:, character:, char_settings:, templates:, rooms:, uid_resolver:, level: 0, profession: '',
               ready_list: {}, inventory: [], armaments: {}, scripts: nil)
         root = File.join(data_dir, game, character)
         store = Store.new(root: File.join(root, 'eohunter'), legacy_root: File.join(root, 'bigshot_profiles'))
@@ -84,7 +84,7 @@ module EO
         room_index = room_list.to_h { |room| [room.id.to_i, room] }
         geography = Geography.new(templates: templates, rooms: room_list, uid_resolver: uid_resolver)
         App.new(store: store, schema: schema, geography: geography,
-                context: { character: character, game: game, level: level },
+                context: { character: character, game: game, level: level, profession: profession.to_s },
                 ecleanse: -> { ecleanse_settings(File.join(root, 'ecleanse.yaml'), char_settings: char_settings) },
                 uid_ids: uid_resolver, room_lookup: ->(id) { room_index[id.to_i] },
                 hazards: Hazards.new(profile_class: EO::Engine::Profile),

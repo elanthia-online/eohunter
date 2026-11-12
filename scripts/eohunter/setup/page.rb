@@ -57,7 +57,8 @@ module EO
         ],
         'creatures' => [
           ['What to hunt', %w[targets invalid_targets always_flee_from quickhunt_targets]],
-          ['Boon creatures', %w[boons_ignore boons_flee]]
+          ['Boon creatures', %w[boons_ignore boons_flee]],
+          ['Tracking', [%w[track track_creature]]]
         ],
         # An inner list is one line: the first setting's label in the label
         # column, the rest beside it.

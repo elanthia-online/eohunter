@@ -116,8 +116,22 @@ module EO
         on_delete(pending[:name], pending[:revision], kind: pending[:kind])
       end
 
+      # Settings only a Ranger can use, hidden from everyone else.
+      RANGER_ONLY = %w[track track_creature].freeze
+
       # @return [Array<Hash>] every field descriptor the schema publishes
-      def fields = @boot[:fields] || @boot['fields'] || []
+      #   that this character can use
+      def fields
+        all = @boot[:fields] || @boot['fields'] || []
+        ranger? ? all : all.reject { |field| RANGER_ONLY.include?(field['key']) }
+      end
+
+      # @return [Boolean] whether the character is a Ranger; false when the
+      #   profession is not known
+      def ranger?
+        context = @boot[:context] || @boot['context'] || {}
+        (context[:profession] || context['profession']).to_s.match?(/ranger/i)
+      end
 
       # @param page [String] settings page identity
       # @return [Array<Hash>] that page's field descriptors, schema order

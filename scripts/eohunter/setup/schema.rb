@@ -8,7 +8,7 @@ module EO
       # Canonical page identities and their native profile setting keys.
       PAGES = {
         'area'      => %w[hunting_room_id hunting_boundaries rallypoint_room_ids],
-        'creatures' => %w[targets quickhunt_targets invalid_targets always_flee_from boons_ignore boons_flee],
+        'creatures' => %w[targets quickhunt_targets invalid_targets always_flee_from boons_ignore boons_flee track track_creature],
         'hunting'   => %w[hunting_stance wander_stance stand_stance turbo weapon_reaction loot_script priority delay_loot loot_stance sneaky_sneaky flee_count flee_message wander_wait
                           flee_clouds flee_vines flee_webs flee_voids lone_targets_only final_loot ignore_disks box_in_hand],
         'rest'      => %w[fried overkill lte_boost oom encumbered encumbrance_grace_seconds wounded_eval creeping_dread crushing_dread wot_poison confusion
@@ -119,6 +119,8 @@ module EO
         'ambush'                      => ['Ambush aim order', 'Body parts to aim AMBUSH at, in order. Comma separated.'],
         'ammo_container'              => ['Ammunition container', 'Where to put ammunition back when a shot is refused.'],
         'sneaky_sneaky'               => ['Hide while moving', 'Hide before moving to the next room.'],
+        'track'                       => ['Track', 'Rangers: TRACK the creature below once in each room before moving on, and follow its trail.'],
+        'track_creature'              => ['Creature to track', 'The creature TRACK follows, as you would type it. ;eohunter <hunt> track <creature> tracks another for one run.'],
         'hunting_room_id'             => ['Start room', 'The room the hunt starts in. A room number, or a UID such as u1234.', 'room'],
         'hunting_boundaries'          => ['Boundary rooms', 'Rooms the hunt never walks into. They keep you inside the area. Comma separated.', 'rooms'],
         'targets'                     => ['Creatures to hunt', 'Creatures to attack. Add (b) to (j) after a name to use that routine. Blank: anything you can fight.'],

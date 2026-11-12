@@ -166,6 +166,8 @@ module EO
           rooms: Map.list, uid_resolver: ->(uid) { Map.ids_from_uid(uid) },
           # The creature finder opens on a band around the character's level.
           level: (XMLData.level.to_i rescue 0),
+          # Ranger-only settings are shown only to a Ranger.
+          profession: (Stats.profession.to_s rescue ''),
           ready_list: ready_list,
           inventory: inventory,
           armaments: armaments,

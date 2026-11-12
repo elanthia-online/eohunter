@@ -67,19 +67,28 @@ module EO::Engine
       # Bounty::Task answers with bandit?. +words+ are the script's
       # arguments after the profile.
       #
+      # The quarry is the one named after `track` (bounty mode names
+      # ebounty's creature the same way), else the profile's
+      # track_creature when its track setting is on: a run can track
+      # something else without editing the hunt.
+      #
       # @param words [Array<String>]
       # @param task [Lich::Gemstone::Bounty::Task, nil] the current
       #   bounty, nil to skip the check
+      # @param profile [#[], nil] the hunt's settings, for track and
+      #   track_creature
       # @return [Policy]
       # @bigshot set_bounty_eval
-      def policy_from(words, task: nil)
+      def policy_from(words, task: nil, profile: nil)
         words = Array(words).map(&:to_s)
         bandits = words.any? { |w| w =~ /\Abandits?\z/i } || bandit_task?(task)
         creature = nil
         if (i = words.index { |w| w =~ /\Atrack\z/i })
           creature = words[(i + 1)..].join(' ')
         end
-        Policy.new(bandits: bandits, creature: creature.to_s.empty? ? nil : creature)
+        creature = profile['track_creature'] if creature.to_s.strip.empty? && profile && profile['track']
+        creature = creature.to_s.strip
+        Policy.new(bandits: bandits, creature: creature.empty? ? nil : creature)
       end
 
       # The bounty says "suppress bandit activity": Lich's Bounty::Task

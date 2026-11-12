@@ -16,6 +16,17 @@ RSpec.describe EO::Engine::Tracking do
     expect(described_class.policy_from(['track']).tracking?).to be false
   end
 
+  it "tracks the profile's creature when its track setting is on, and the command line's over it" do
+    profile = ->(raw) { EO::Engine::Profile.new(raw) }
+    on = profile.call('track' => true, 'track_creature' => ' giant rat ')
+    expect(described_class.policy_from([], profile: on).creature_name).to eq('giant rat')
+    expect(described_class.policy_from(%w[track kobold], profile: on).creature_name).to eq('kobold')
+    expect(described_class.policy_from(['track'], profile: on).creature_name).to eq('giant rat')
+    expect(described_class.policy_from([], profile: profile.call('track' => false, 'track_creature' => 'giant rat')).tracking?).to be false
+    expect(described_class.policy_from([], profile: profile.call('track' => true)).tracking?).to be false
+    expect(described_class.policy_from([], profile: profile.call({})).tracking?).to be false
+  end
+
   it 'hunts only the bandit nouns, on the quick routine, in bandit mode' do
     policy = EO::Engine::Targets::Policy.new(wanted: described_class.bandit_targets)
     roster = [OpenStruct.new(id: '1', name: 'kobold', noun: 'kobold', status: '', type: 'aggressive npc'),
