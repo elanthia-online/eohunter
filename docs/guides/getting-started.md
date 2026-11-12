@@ -55,7 +55,7 @@ empty one. The pages down the side follow a hunt from start to finish:
   **Gear**, **Multi-account team:** every other setting. Recovery is
   where Cleanse's settings live, with Import from ecleanse to copy them
   in once. A setting that takes a Ruby condition has Test now beside it,
-    which runs it the way the hunt would.
+  which runs it the way the hunt would.
 
 Validate checks the hunt against the installed engine and shows errors
 and warnings under the settings they belong to. Save writes it to
