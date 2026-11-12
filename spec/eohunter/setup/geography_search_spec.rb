@@ -60,7 +60,9 @@ RSpec.describe EO::HunterSetup::Geography, 'finding a place to look at' do
     # Each area apart, largest first: a hunt walks the one it starts in.
     expect(fence[:areas]).to eq([[11, 12], [21]])
     expect(fence[:sheets].map { |sheet| sheet[:id] }).to eq(['wild.png'])
-    expect(wilds.creature_fence('nobody')).to eq(room_ids: [], boundary_ids: [], pockets: 0, areas: [], sheets: [])
+    # And where each one is drawn, with a room to bring it into view.
+    expect(fence[:views].map { |view| [view[:sheet], view[:anchor]] }).to eq([['wild.png', 11], ['wild.png', 21]])
+    expect(wilds.creature_fence('nobody')).to eq(room_ids: [], boundary_ids: [], pockets: 0, areas: [], views: [], sheets: [])
   end
 
   it 'describes a creature for the details popup, leaving out what is not recorded' do
